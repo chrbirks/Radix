@@ -1471,7 +1471,9 @@ def test_register_csr_field_table_visible_with_values(qtbot, window: MainWindow)
     _submit(qtbot, window, "CTRL(0x8C01A0F3)")
 
     assert window.intview.field_table.isVisibleTo(window)
-    text = window.intview.field_table.text()
+    # Entries are glued with &nbsp; so a wrap can only fall between fields,
+    # never between a name and its bracket; normalise that back for reading.
+    text = window.intview.field_table.text().replace("&nbsp;", " ")
     assert "EN" in text
     assert "CMD" in text
     assert "0xF3" in text  # CMD = 0xF3, matching decode_note's own formatting
@@ -1510,7 +1512,8 @@ def test_register_csr_survives_word_size_cycle(qtbot, window: MainWindow) -> Non
     window._after_setting_change()
     assert window.intview.grid_widget.named_fields is not None  # overlay still not wiped
     assert window.intview.grid_widget._field_index_of(7) == 3  # CMD (top byte) still active
-    assert "= -" in window.intview.field_table.text()  # EN reported as clipped
+    clipped = window.intview.field_table.text().replace("&nbsp;", " ")
+    assert "= -" in clipped  # EN reported as clipped
 
 
 def test_register_csr_cleared_by_plain_number(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1803,6 +1806,220 @@ def test_long_result_is_available_in_full_via_tooltip(qtbot, window: MainWindow)
     tooltip = window.model.data(window.model.index(0), Qt.ItemDataRole.ToolTipRole)
     assert str(2**200) in tooltip
     assert "2**200" in tooltip
+
+
+# -- status bar: chips readable, tooltips truthful --------------------------------
+
+
+@pytest.mark.parametrize("size", [(520, 600), (640, 880)])
+def test_mode_chips_never_elide_their_own_labels(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, size: tuple[int, int]
+) -> None:
+    """"FLOAT OFF" used to render as "FL…FF" and "unsigned" as "un…ed"."""
+    from radix.ui_qt.main_window import CHIP_PAD_H
+
+    styled_window.resize(*size)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    for _ in range(4):  # every mode through every one of its states
+        for toggle in (
+            styled_window._cycle_word_size,
+            styled_window._cycle_notation,
+            styled_window._cycle_int_base,
+            styled_window._toggle_signed,
+            styled_window._toggle_float_view,
+            styled_window._toggle_angle,
+        ):
+            toggle()
+        qtbot.wait(1)
+        for key, chip in styled_window.status_items.items():
+            needed = chip.fontMetrics().horizontalAdvance(chip.text())
+            assert needed <= chip.width() - 2 * CHIP_PAD_H, (
+                f"{key} chip elides {chip.text()!r} at {size}"
+            )
+
+
+def test_every_chip_tooltip_names_a_shortcut_that_is_bound(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The base and float chips advertised Alt+B / Alt+F for two releases."""
+    from radix.ui_qt.main_window import MODE_CHIPS
+
+    bound = {action.shortcut().toString() for action in window.actions()}
+    for key, shortcut, _description in MODE_CHIPS:
+        tooltip = window.status_items[key].toolTip()
+        assert shortcut in tooltip, f"{key} tooltip {tooltip!r} omits its shortcut"
+        assert shortcut in bound, f"{key} tooltip advertises unbound {shortcut}"
+
+
+def test_alt_b_and_alt_f_stay_with_the_input_line(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """They are bash-style word-jump; the mode toggles must not reclaim them."""
+    bound = {action.shortcut().toString() for action in window.actions()}
+    assert "Alt+B" not in bound
+    assert "Alt+F" not in bound
+
+
+# -- pane identity ------------------------------------------------------------------
+
+
+def test_pane_caption_names_whatever_the_stack_shows(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    assert window.pane_caption.text() == "HISTORY"
+    window._show_vars()
+    assert window.pane_caption.text() == "VARIABLES"
+    window._show_help()
+    assert window.pane_caption.text() == "HELP"
+    window._show_help("topic text")
+    assert window.pane_caption.text() == "HELP TOPIC"
+    window._hide_help()
+    assert window.pane_caption.text() == "HISTORY"
+
+
+def test_short_history_sits_against_the_input(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """A REPL reads bottom-up; rows floated at the top of a tall empty pane."""
+    styled_window.resize(640, 1100)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    for text in ("1+1", "2+2"):
+        _submit(qtbot, styled_window, text)
+    qtbot.wait(10)
+    view = styled_window.history_view
+    content = sum(view.sizeHintForRow(row) for row in range(styled_window.model.rowCount()))
+    assert view.viewportMargins().top() > 0  # padded down to meet the input
+    assert view.viewport().height() >= content  # and still shows every row
+
+
+def test_history_padding_never_hides_a_row(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Bottom-padding must not outlive the height it was computed against.
+
+    A CSR decode adds a three-line row *and* grows the inspector (its field
+    table wraps), which shrinks the history pane without resizing the view
+    itself. Stale padding then clipped the row with the scrollbar still at
+    zero — the content was on screen nowhere and unreachable.
+    """
+    styled_window.resize(560, 880)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    _submit(qtbot, styled_window, "csr CTRL = EN[31] IRQ[30:28] ADDR[27:8] CMD[7:0]")
+    _submit(qtbot, styled_window, "CTRL(0x8C01A0F3)")
+    qtbot.wait(20)
+    view = styled_window.history_view
+    content = sum(view.sizeHintForRow(row) for row in range(styled_window.model.rowCount()))
+    reachable = view.viewport().height() + view.verticalScrollBar().maximum()
+    assert reachable >= content, (
+        f"{content - reachable}px of history is unreachable "
+        f"(viewport {view.viewport().height()}, scroll {view.verticalScrollBar().maximum()})"
+    )
+
+
+def test_overflowing_history_gets_no_padding(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Once the rows overflow, scrolling behaves exactly as it always did."""
+    styled_window.resize(640, 600)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    for i in range(40):
+        _submit(qtbot, styled_window, f"{i}+{i}")
+    qtbot.wait(10)
+    assert styled_window.history_view.viewportMargins().top() == 0
+    assert styled_window.history_view.verticalScrollBar().maximum() > 0
+
+
+# -- pinned rack ---------------------------------------------------------------------
+
+
+def test_pinning_the_same_value_twice_reuses_the_channel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Eight slots exist to compare values, not to hold four copies of one."""
+    _submit(qtbot, window, "0xABCD")
+    for _ in range(4):
+        window._pin_last_result()
+    assert [c.label for c in window.channels.channels] == ["C1"]
+    assert window.preview.text() == "already pinned as C1"
+    _submit(qtbot, window, "0x1234")
+    window._pin_last_result()
+    assert [c.label for c in window.channels.channels] == ["C1", "C2"]
+
+
+# -- csr field table ------------------------------------------------------------------
+
+
+def test_csr_field_entries_never_wrap_mid_field(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """A break between "CMD" and "[7:0]" reads as two separate things."""
+    _define_ctrl_csr(qtbot, window)
+    _submit(qtbot, window, "CTRL(0x8C01A0F3)")
+    markup = window.intview.field_table.text()
+    for name in ("EN", "IRQ", "ADDR", "CMD"):
+        assert f"{name}</a>&nbsp;[" in markup, f"{name} can wrap from its bracket"
+    # No breakable space anywhere inside an entry: every plain space left in
+    # the markup belongs to an HTML attribute, never to "NAME [msb:lsb] = v".
+    assert " [" not in markup
+    assert " = " not in markup
+
+
+# -- keyboard access to the bit grid ---------------------------------------------------
+
+
+def test_alt_g_cursor_moves_toggles_and_selects(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The grid was mouse-only in an app whose contract is keyboard-first."""
+    window.show()
+    qtbot.waitExposed(window)
+    _submit(qtbot, window, "0xF0F0")
+    window._toggle_grid_cursor()
+    assert window.intview.cursor_bit == 31  # starts on the MSB
+
+    qtbot.keyClick(window.input, Qt.Key.Key_Right)
+    assert window.intview.cursor_bit == 30
+    qtbot.keyClick(window.input, Qt.Key.Key_Down)
+    assert window.intview.cursor_bit == 30 - window.intview.bits_per_row()
+    qtbot.keyClick(window.input, Qt.Key.Key_End)
+    assert window.intview.cursor_bit == 0
+
+    before = window.intview.scratch
+    qtbot.keyClick(window.input, Qt.Key.Key_Space)
+    assert window.intview.scratch == before ^ 1
+    assert window.input.text() == "0xF0F1"  # edits flow back to the input line
+
+    qtbot.keyClick(window.input, Qt.Key.Key_Home)
+    for _ in range(4):
+        qtbot.keyClick(window.input, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    assert window.intview.grid_widget.selection == (31, 27)
+    assert "[31:27]" in window.intview.slice_label.text()
+
+
+def test_grid_cursor_releases_the_arrow_keys_on_escape(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "0xF0F0")
+    window._toggle_grid_cursor()
+    qtbot.keyClick(window.input, Qt.Key.Key_Escape)
+    assert window.intview.cursor_bit is None
+    qtbot.keyClick(window.input, Qt.Key.Key_Up)
+    assert window.input.text() == "0xF0F0"  # history recall again
+
+
+def test_grid_cursor_declines_when_there_is_no_register(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window._toggle_grid_cursor()  # empty panel
+    assert window.intview.cursor_bit is None
+    window._toggle_float_view()
+    _submit(qtbot, window, "2.5")  # read-only IEEE-754 view
+    window._toggle_grid_cursor()
+    assert window.intview.cursor_bit is None
+
+
+def test_grid_cursor_clears_when_the_panel_greys(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "0xF0F0")
+    window._toggle_grid_cursor()
+    assert window.intview.cursor_bit is not None
+    _submit(qtbot, window, "2.5")  # float result greys the panel
+    assert window.intview.cursor_bit is None
+
+
+# -- the preview line never cuts text silently -------------------------------------
+
+
+def test_overlong_preview_text_elides_with_a_tooltip(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    styled_window.resize(520, 600)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    styled_window._toast("x" * 300)
+    assert styled_window.preview.text().endswith("…")
+    assert styled_window.preview.toolTip() == "x" * 300
+    needed = styled_window.preview.fontMetrics().horizontalAdvance(styled_window.preview.text())
+    assert needed <= styled_window.preview.width()
 
 
 # -- word-size truncation is never silent --------------------------------------

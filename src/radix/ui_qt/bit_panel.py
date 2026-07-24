@@ -68,6 +68,10 @@ class BitGrid(QWidget):
         self._hover_bit: int | None = None
         self._press_bit: int | None = None
         self._dragging = False
+        # Keyboard cursor cell. The grid never takes focus (the input line
+        # keeps it, always), so MainWindow forwards navigation keys here and
+        # this is what they move — outlined in paintEvent when set.
+        self.cursor_bit: int | None = None
         self.setMouseTracking(True)
         self._apply_height()
 
@@ -187,6 +191,13 @@ class BitGrid(QWidget):
             painter.setPen(QPen(QColor(p.text), 1.5))
             for bit in range(lo, min(hi, self.word_size - 1) + 1):
                 painter.drawRoundedRect(self._cell_rect(bit).adjusted(-1, -1, 1, 1), 3, 3)
+        if self.cursor_bit is not None and self.enabled_look:
+            # Accent = the interaction channel, so the keyboard cursor reads as
+            # "you are here" and never as data (bit_on) or a measurement span
+            # (bit_changed, the drag selection drawn just above).
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(p.accent), 2))
+            painter.drawRoundedRect(self._cell_rect(self.cursor_bit).adjusted(-2, -2, 2, 2), 4, 4)
         if self.named_fields is not None:
             self._paint_field_bands(painter)
         label_font = painter.font()
@@ -350,6 +361,7 @@ class IntegerView(QWidget):
         self.signed = False
         self.active = False
         self._ref: tuple[str, int] | None = None  # armed channel: (label, value)
+        self._cursor_anchor: int | None = None  # Shift+arrow range origin
         self.float_mode: FloatViews | None = None  # read-only IEEE-754 display
         self.csr: Csr | None = None  # field layout for the shown value
 
@@ -448,6 +460,8 @@ class IntegerView(QWidget):
         self.signed = signed
         self.float_mode = float_views if value is None else None
         self.csr = csr
+        if value is None:  # nothing editable left for the cursor to sit on
+            self.stop_cursor()
         was_active = self.active
         self.active = value is not None
         if value is not None:
@@ -478,6 +492,70 @@ class IntegerView(QWidget):
         had = self.grid_widget.selection is not None
         self.grid_widget.set_selection(None)
         return had
+
+    # -- keyboard cursor ---------------------------------------------------------
+    #
+    # The bit grid was mouse-only: toggling a bit or reading a field out of a
+    # range needed a click or a drag, in an app whose stated contract is that
+    # everything is reachable from the keyboard. The input line keeps focus at
+    # all times, so MainWindow forwards the navigation keys here rather than
+    # making the grid a focus target.
+
+    @property
+    def cursor_bit(self) -> int | None:
+        return self.grid_widget.cursor_bit
+
+    def start_cursor(self) -> bool:
+        """Place the cursor (on the MSB) if there is an editable grid. """
+        if not self.active or self.float_mode is not None:
+            return False
+        if self.grid_widget.cursor_bit is None:
+            self._set_cursor(self.word_size - 1)
+        return True
+
+    def stop_cursor(self) -> None:
+        self._cursor_anchor = None
+        self.grid_widget.cursor_bit = None
+        self.grid_widget.update()
+
+    def _set_cursor(self, bit: int) -> None:
+        self.grid_widget.cursor_bit = max(0, min(bit, self.word_size - 1))
+        self.grid_widget.update()
+
+    def move_cursor(self, delta: int, extend: bool) -> None:
+        """Step the cursor by `delta` bit positions (+1 = toward the LSB).
+
+        With `extend`, the move drags a range out from the anchor, which is
+        the keyboard equivalent of the mouse drag that reads out a field.
+        """
+        if self.grid_widget.cursor_bit is None:
+            return
+        if extend and self._cursor_anchor is None:
+            self._cursor_anchor = self.grid_widget.cursor_bit
+        target = self.grid_widget.cursor_bit - delta  # bit indices run right-to-left
+        self._set_cursor(target)
+        moved = self.grid_widget.cursor_bit
+        if extend:
+            assert self._cursor_anchor is not None
+            self.grid_widget.set_selection(
+                (max(moved, self._cursor_anchor), min(moved, self._cursor_anchor))
+            )
+            self._update_slice_label()
+        else:
+            self._cursor_anchor = None
+            self.grid_widget.set_selection(None)
+            self._update_slice_label()
+
+    def bits_per_row(self) -> int:
+        return self.grid_widget._bits_per_row()
+
+    def toggle_cursor_bit(self) -> None:
+        if self.grid_widget.cursor_bit is None:
+            return
+        bit = self.grid_widget.cursor_bit
+        self.toggle_bit(bit)  # clears the selection, re-renders, updates the input
+        self._set_cursor(bit)  # ...but the cursor stays where the user put it
+        self._cursor_anchor = None
 
     @property
     def _masked_scratch(self) -> int:
@@ -614,7 +692,7 @@ class IntegerView(QWidget):
             if f.msb >= self.word_size:
                 parts.append(
                     f'<span style="color:{self.palette_tokens.muted}">'
-                    f"{f.name} {bracket} = -</span>"
+                    f"{f.name}&nbsp;{bracket}&nbsp;=&nbsp;-</span>"
                 )
                 continue
             value = (self._masked_scratch >> f.lsb) & ((1 << f.width) - 1)
@@ -622,11 +700,17 @@ class IntegerView(QWidget):
             # Name colored to match its grid bracket, so the table and the
             # overlay above read as one mapping, not two separate legends.
             color = field_bands[field_index % len(field_bands)]
+            # Non-breaking inside an entry: the wrap has to fall between fields,
+            # never between a name and its bracket ("CMD" / "[7:0] = 0xF3").
             parts.append(
                 f'<a href="{f.name}" style="color:{color}; text-decoration:none;">{f.name}</a>'
-                f" {bracket} = {text}"
+                f"&nbsp;{bracket}&nbsp;=&nbsp;{text}"
             )
-        self.field_table.setText("&nbsp;&nbsp;&nbsp;".join(parts))
+        # Two non-breaking spaces for the gutter plus one real space: the only
+        # place the line is allowed to wrap is between whole entries. All
+        # non-breaking (as it was) would push the last field off the edge
+        # instead of wrapping it.
+        self.field_table.setText("&nbsp;&nbsp; ".join(parts))
 
     def _on_field_link(self, name: str) -> None:
         if self.csr is None:

@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractSlider,
     QApplication,
@@ -40,19 +40,41 @@ from radix.engine.errors import CalcError, IncompleteError
 from radix.engine.help import general_help_html
 from radix.engine.values import Value
 from radix.history.store import HistoryStore, StoredEntry
-from radix.session import Session
+from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Session
 from radix.ui_qt.completer import Completer
 from radix.ui_qt.highlight import ExprHighlighter
 from radix.ui_qt.history_model import HistoryDelegate, HistoryEntry, HistoryModel
 from radix.ui_qt.input_edit import InputBar
 from radix.ui_qt.inspector import Inspector
 from radix.ui_qt.settings import app_settings, load_session, load_state, save_session, save_state
-from radix.ui_qt.theme import LABEL_FAMILY, THEME_MODES, Palette, theme_mode_icon
+from radix.ui_qt.theme import (
+    FONT_MICRO,
+    LABEL_FAMILY,
+    THEME_MODES,
+    Palette,
+    theme_mode_icon,
+)
 from radix.ui_qt.zones import ZoneCaption, margin_wrap
 
 PREVIEW_DEBOUNCE_MS = 100
 INSPECTOR_MIN_H = 160  # scrolls below this rather than squeezing its contents
 PANE_MIN_H = 120  # history/help/vars never collapse to nothing
+CHIP_PAD_H = 10  # matches the modeChip QSS horizontal padding
+PREVIEW_PAD_H = 12  # matches the QLabel#preview QSS horizontal padding
+
+# (chip key, shortcut, what it controls). One source for the key binding and
+# the status-bar tooltip: these were hand-written in two places and drifted, so
+# the base and float chips advertised Alt+B / Alt+F long after those keys were
+# reassigned to bash-style word-jump in the input line. `test_ui_smoke` asserts
+# every shortcut named in a tooltip is really bound.
+MODE_CHIPS: tuple[tuple[str, str, str], ...] = (
+    ("angle", "Alt+D", "angle unit"),
+    ("word", "Alt+W", "word size for bit ops"),
+    ("sign", "Alt+S", "signedness of >> and the SGN row"),
+    ("base", "Alt+Shift+B", "integer result base for history & preview"),
+    ("notation", "Alt+N", "result notation"),
+    ("float", "Alt+Shift+F", "IEEE-754 breakdown for real results"),
+)
 
 
 class InspectorScroll(QScrollArea):
@@ -102,6 +124,7 @@ SHORTCUT_HELP = """Keyboard shortcuts
   Alt+V        variables pane    del <name>   remove a variable
   Alt+Shift+F  show/hide float view (READOUT/REGISTER)
   Alt+P        pin last result as a channel
+  Alt+G        bit cursor in the register grid (arrows/shift+arrows/space)
   Alt+I        show/hide inspector panel
   Alt+M        cycle theme (auto/light/dark)
 
@@ -122,6 +145,7 @@ class MainWindow(QMainWindow):
         self.recall_index: int | None = None
         self._inspect_locked = False
         self._toast_active = False
+        self._preview_full = " "
         self._pane_hid_inspector = False
         self._help_overview_shown = False
         self._did_initial_show = False
@@ -160,6 +184,14 @@ class MainWindow(QMainWindow):
         self.history_view.verticalScrollBar().valueChanged.connect(
             self._on_history_scroll_changed
         )
+        # Any change to how many rows there are changes how much bottom-padding
+        # the view needs; deferred so the row heights are settled when we ask.
+        for signal in (
+            self.model.rowsInserted,
+            self.model.rowsRemoved,
+            self.model.modelReset,
+        ):
+            signal.connect(lambda *_: QTimer.singleShot(0, self._resync_history_scroll))
         # Row width comes from the viewport at layout time (the delegate
         # draws unwrapped text straight into option.rect, never measuring
         # content) — Fixed (Qt's default) only lays that out once, so a
@@ -204,6 +236,12 @@ class MainWindow(QMainWindow):
         )
         self.pane_stack.setMinimumHeight(PANE_MIN_H)
 
+        # The pane stack was the one zone with no silkscreen caption, so
+        # switching to vars or a help topic swapped in a similar-looking list
+        # with nothing naming it. Tracks whatever the stack is showing.
+        self.pane_caption = ZoneCaption("HISTORY")
+        self.pane_caption.set_palette(palette)
+
         self.result_caption = ZoneCaption("RESULT")
         self.result_caption.set_palette(palette)
         self.result_label = QLabel("—")
@@ -226,6 +264,7 @@ class MainWindow(QMainWindow):
         # Re-pin only if we were already at the bottom pre-resize, so a
         # resize while reviewing older entries doesn't yank the view down.
         self.history_view.installEventFilter(self)
+        self.history_view.viewport().installEventFilter(self)
         self.highlighter = ExprHighlighter(self.input.document(), palette)
         self.completer = Completer(self.input, session, palette)
 
@@ -249,6 +288,7 @@ class MainWindow(QMainWindow):
         self.channels.copied.connect(self._toast)
         self.channels.ref_changed.connect(self._on_ref_changed)
 
+        self.root_layout.addWidget(margin_wrap(self.pane_caption, 12))
         self.root_layout.addWidget(self.pane_stack, 1)
         self.root_layout.addWidget(margin_wrap(self.result_caption, 12))
         self.root_layout.addWidget(self.result_label)
@@ -317,23 +357,52 @@ class MainWindow(QMainWindow):
 
     # -- construction helpers ---------------------------------------------------
 
+    def _chip_handlers(self) -> dict[str, Callable[[], None]]:
+        return {
+            "angle": self._toggle_angle,
+            "word": self._cycle_word_size,
+            "sign": self._toggle_signed,
+            "base": self._cycle_int_base,
+            "notation": self._cycle_notation,
+            "float": self._toggle_float_view,
+        }
+
+    @staticmethod
+    def _chip_width(key: str) -> int:
+        """Width of the widest label `key`'s chip can display, plus QSS padding.
+
+        Measured against a QFont built here rather than the widget's own
+        metrics: at construction time the chip has not been polished yet, so
+        `chip.fontMetrics()` still reports the default face and under-measures
+        the silkscreen label by enough to let "32-bit" elide at 520px.
+        """
+        labels = {
+            "angle": ["DEG", "RAD"],
+            "word": [f"{size}-bit" for size in WORD_SIZES],
+            "sign": ["signed", "unsigned"],
+            "base": [base.upper() for base in INT_BASES],
+            "notation": [n.replace("eng_si", "eng·si").upper() for n in NOTATIONS],
+            "float": ["FLOAT ON", "FLOAT OFF"],
+        }[key]
+        font = QFont(LABEL_FAMILY)
+        font.setPixelSize(FONT_MICRO)
+        metrics = QFontMetrics(font)
+        return max(metrics.horizontalAdvance(text) for text in labels) + 2 * CHIP_PAD_H
+
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
         self.status_items: dict[str, QToolButton] = {}
-        for key, handler in (
-            ("angle", self._toggle_angle),
-            ("word", self._cycle_word_size),
-            ("sign", self._toggle_signed),
-            ("base", self._cycle_int_base),
-            ("notation", self._cycle_notation),
-            ("float", self._toggle_float_view),
-        ):
+        for key, _shortcut, _description in MODE_CHIPS:
             chip = QToolButton()
             chip.setProperty("class", "modeChip")
             chip.setAutoRaise(True)
             chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # chips never steal focus
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.clicked.connect(handler)
+            chip.clicked.connect(self._chip_handlers()[key])
+            # Sized for the widest label the chip can ever hold, so a narrow
+            # window can't elide "unsigned" to "un…ed" and toggling a mode
+            # doesn't shuffle the whole status bar sideways.
+            chip.setMinimumWidth(self._chip_width(key))
             bar.addPermanentWidget(chip)
             self.status_items[key] = chip
         self.theme_chip = QToolButton()
@@ -360,19 +429,18 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _build_shortcuts(self) -> None:
-        for keys, handler in (
+        handlers = self._chip_handlers()
+        chip_shortcuts = tuple(
+            (shortcut, handlers[key]) for key, shortcut, _description in MODE_CHIPS
+        )
+        for keys, handler in chip_shortcuts + (
             ("Ctrl+L", self._clear_history_view),
             ("Ctrl+Shift+C", self._copy_result),
             ("F1", self._show_help),
-            ("Alt+W", self._cycle_word_size),
-            ("Alt+S", self._toggle_signed),
-            ("Alt+D", self._toggle_angle),
-            ("Alt+N", self._cycle_notation),
-            ("Alt+Shift+B", self._cycle_int_base),
-            ("Alt+Shift+F", self._toggle_float_view),
             ("Alt+T", self._toggle_always_on_top),
             ("Alt+V", self._toggle_vars),
             ("Alt+P", self._pin_last_result),
+            ("Alt+G", self._toggle_grid_cursor),
             ("Alt+I", self._toggle_inspector),
             ("Alt+M", self._cycle_theme_mode),
         ):
@@ -566,11 +634,25 @@ class MainWindow(QMainWindow):
     def _set_preview(self, text: str, state: str) -> None:
         """Write the line under the input. `state` is "ok" | "error" | "toast"."""
         self._toast_active = state == "toast"  # a real preview supersedes a toast
-        self.preview.setText(text)
+        self._preview_full = text
+        self._render_preview()
         self.preview.setProperty("state", state)
         style = self.preview.style()
         style.unpolish(self.preview)
         style.polish(self.preview)
+
+    def _render_preview(self) -> None:
+        """Fit the current preview text to the label, eliding rather than cutting.
+
+        Long previews (a wide normalized expression plus its result) and long
+        confirmations both outrun the line at narrow widths; without this they
+        just stop at the edge with no sign anything is missing.
+        """
+        metrics = self.preview.fontMetrics()
+        available = self.preview.width() - 2 * PREVIEW_PAD_H
+        elided = metrics.elidedText(self._preview_full, Qt.TextElideMode.ElideRight, available)
+        self.preview.setText(elided)
+        self.preview.setToolTip(self._preview_full if elided != self._preview_full else "")
 
     def _show_error(self, exc: CalcError) -> None:
         # The offending span gets a wavy underline in the input itself (a
@@ -581,17 +663,45 @@ class MainWindow(QMainWindow):
     def _on_history_scroll_changed(self, value: int) -> None:
         self._history_follow_bottom = value >= self.history_view.verticalScrollBar().maximum()
 
+    def _resync_history_padding(self) -> None:
+        """Push a short history down so it sits against the input line.
+
+        A REPL reads bottom-up: the newest entry belongs next to where you
+        type, not stranded at the top of a mostly empty pane (~400px of gap in
+        a tall window). Once the rows overflow the viewport the padding is
+        zero and everything below — scrollToBottom, the follow-the-bottom
+        tracking — behaves exactly as it did.
+        """
+        view = self.history_view
+        content = sum(view.sizeHintForRow(row) for row in range(self.model.rowCount()))
+        # Measure against the height the viewport would have with no padding —
+        # viewport() already excludes the margin we set last time, so using it
+        # directly would feed back on itself and converge on half the slack.
+        available = view.viewport().height() + view.viewportMargins().top()
+        slack = max(0, available - content)
+        if view.viewportMargins().top() != slack:
+            view.setViewportMargins(0, slack, 0, 0)
+
     def _resync_history_scroll(self) -> None:
         # Re-checked here rather than at schedule time: a resize's layout
         # settles on the next event-loop tick, and by then the user may
         # already have scrolled away from the bottom.
+        self._resync_history_padding()
         if self._history_follow_bottom:
             self.history_view.scrollToBottom()
 
     # -- history recall ---------------------------------------------------------
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if obj is self.history_view and event.type() == QEvent.Type.Resize:
+        if (
+            obj in (self.history_view, self.history_view.viewport())
+            and event.type() == QEvent.Type.Resize
+        ):
+            # The viewport too, not just the view: anything that changes the
+            # pane's height without resizing the view itself (the inspector
+            # growing a wrapped field table, say) would otherwise leave the
+            # bottom-padding computed against a stale height — which clips the
+            # last row *and* leaves no scrollbar to reach it.
             QTimer.singleShot(0, self._resync_history_scroll)
         if obj is self.input and event.type() == QEvent.Type.FocusOut:
             self.completer.hide()
@@ -601,6 +711,8 @@ class MainWindow(QMainWindow):
                 return True
             if self._scroll_overlay_pane(event.key()):
                 return True  # help/vars showing: these scroll it, not history
+            if self._handle_grid_cursor_key(event):
+                return True  # Alt+G cursor is up: arrows drive the bit grid
             if event.key() == Qt.Key.Key_Up:
                 self._recall(-1)
                 return True
@@ -608,7 +720,9 @@ class MainWindow(QMainWindow):
                 self._recall(+1)
                 return True
             if event.key() == Qt.Key.Key_Escape:
-                if self.intview.clear_selection():  # bit-range selection first
+                if self.intview.cursor_bit is not None:  # leave grid mode first
+                    self.intview.stop_cursor()
+                elif self.intview.clear_selection():  # then a bit-range selection
                     pass
                 elif self._inspect_locked:
                     self._clear_inspect_lock(follow_ans=True)
@@ -738,9 +852,12 @@ class MainWindow(QMainWindow):
 
     def _pin_value(self, value: Value, label: str | None) -> None:
         text = self.session.format_value(value)
+        already = self.channels.label_of(value) if label is None else None
         assigned = self.channels.pin(value, text, label)
         if assigned is None:
             self._toast("pinned rack full -- unpin one")
+        elif already is not None:
+            self._toast(f"already pinned as {already}")
         else:
             self._toast(f"pinned {assigned}")
 
@@ -817,12 +934,8 @@ class MainWindow(QMainWindow):
             "float": "FLOAT ON" if session.show_float_view else "FLOAT OFF",
         }
         tips = {
-            "angle": "angle unit — click or Alt+D",
-            "word": "word size for bit ops — click or Alt+W",
-            "sign": "signedness of >> and SGN row — click or Alt+S",
-            "base": "integer result base for history & preview — click or Alt+B",
-            "notation": "result notation — click or Alt+N",
-            "float": "show IEEE-754 breakdown for real results — click or Alt+F",
+            key: f"{description} — click or {shortcut}"
+            for key, shortcut, description in MODE_CHIPS
         }
         for key, label in self.status_items.items():
             label.setText(texts[key])
@@ -848,6 +961,12 @@ class MainWindow(QMainWindow):
         only what this hid, so an inspector the user closed with Alt+I stays
         closed.
         """
+        captions: dict[QWidget, str] = {
+            self.history_view: "HISTORY",
+            self.help_pane: "HELP" if self._help_overview_shown else "HELP TOPIC",
+            self.vars_pane: "VARIABLES",
+        }
+        self.pane_caption.set_text(captions[pane])
         overlay = pane is not self.history_view
         if overlay and not self._pane_hid_inspector and self.inspector.isVisibleTo(self):
             self.inspector_scroll.setVisible(False)
@@ -879,6 +998,48 @@ class MainWindow(QMainWindow):
         scrollbar = pane.verticalScrollBar()  # type: ignore[attr-defined]
         scrollbar.triggerAction(action)
         return True
+
+    # -- bit-grid keyboard cursor ----------------------------------------------
+
+    def _toggle_grid_cursor(self) -> None:
+        if self.intview.cursor_bit is not None:
+            self.intview.stop_cursor()
+            self._toast("bit cursor off")
+            return
+        if not self.intview.start_cursor():
+            self._toast("no editable register to move a cursor over")
+            return
+        self._toast("bit cursor: arrows move, space toggles, Esc exits")
+
+    def _handle_grid_cursor_key(self, event: QKeyEvent) -> bool:
+        """Drive the bit grid from the input line, which never gives up focus.
+
+        Only active between Alt+G and Esc, so the keys it borrows (arrows for
+        history recall, space for typing) behave normally the rest of the time.
+        """
+        if self.intview.cursor_bit is None:
+            return False
+        extend = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        per_row = self.intview.bits_per_row()
+        steps: dict[int, int] = {
+            Qt.Key.Key_Left: -1,
+            Qt.Key.Key_Right: 1,
+            Qt.Key.Key_Up: -per_row,
+            Qt.Key.Key_Down: per_row,
+        }
+        key = event.key()
+        if key in steps:
+            self.intview.move_cursor(steps[key], extend)
+            return True
+        if key == Qt.Key.Key_Space:
+            self.intview.toggle_cursor_bit()
+            return True
+        if key in (Qt.Key.Key_Home, Qt.Key.Key_End):
+            # Home = MSB (top-left), End = bit 0 — the grid's own reading order.
+            target = self.session.word_size - 1 if key == Qt.Key.Key_Home else 0
+            self.intview.move_cursor(self.intview.cursor_bit - target, extend)
+            return True
+        return False
 
     def _show_help(self, text: str | None = None) -> None:
         self._help_overview_shown = text is None
@@ -1041,4 +1202,6 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: object) -> None:  # popup geometry would go stale
         if hasattr(self, "completer"):
             self.completer.hide()
+        if hasattr(self, "preview"):
+            self._render_preview()  # elision depends on the label's width
         super().resizeEvent(event)  # type: ignore[arg-type]

@@ -117,7 +117,7 @@ Notable rules (all covered by tests):
 Every status-bar item is clickable (or use its shortcut) and takes effect
 immediately — existing history entries re-render in place:
 
-- **Result base** (DEC/HEX/BIN, Alt+B): integer results in the history pane
+- **Result base** (DEC/HEX/BIN, Alt+Shift+B): integer results in the history pane
   and live preview render in the chosen base — `1020` ↔ `0x3FC` ↔
   `0b11_1111_1100`. Compact and nibble-grouped; negatives as word-size
   two's complement. Floats are unaffected.
@@ -153,8 +153,12 @@ always-on-top, window geometry — persist across restarts in a plain INI file
 | F1 or `help`     | help pane (Esc dismisses)                              |
 | Alt+W / Alt+S    | word size / signedness                                 |
 | Alt+D / Alt+N    | deg-rad / notation                                     |
-| Alt+B            | result base (dec/hex/bin)                              |
+| Alt+Shift+B      | result base (dec/hex/bin)                              |
+| Alt+Shift+F      | show/hide the IEEE-754 float view                      |
 | Alt+V            | variables pane (`del <name>` removes)                  |
+| Alt+P            | pin the last result as a channel                       |
+| Alt+G            | bit cursor: arrows move, shift+arrows select a range,   |
+|                  | space toggles the bit, Esc exits                       |
 | Alt+T            | always on top                                          |
 | Alt+I            | show/hide the inspector panel                          |
 | Alt+M            | cycle theme: auto (follows the OS) / light / dark      |

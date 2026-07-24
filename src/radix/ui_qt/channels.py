@@ -286,6 +286,22 @@ class ChannelsRack(QWidget):
             n += 1
         return f"C{n}"
 
+    def label_of(self, value: Value) -> str | None:
+        """Label of the channel already holding this integer, if any.
+
+        The rack exists to compare values against each other, so four strips
+        all reading `43981` are just noise crowding out the seven slots that
+        could hold something else.
+        """
+        number = value.number
+        if not isinstance(number, int):
+            return None  # non-int channels restore as text; no identity to match
+        for channel in self.channels:
+            other = channel.value
+            if other is not None and isinstance(other.number, int) and other.number == number:
+                return channel.label
+        return None
+
     # -- mutation ---------------------------------------------------------------
 
     def pin(self, value: Value, text: str, label: str | None) -> str | None:
@@ -300,6 +316,9 @@ class ChannelsRack(QWidget):
                     return label
         if len(self.channels) >= MAX_CHANNELS:
             return None
+        existing_label = self.label_of(value)
+        if existing_label is not None:
+            return existing_label  # already in the rack; caller says so
         assigned = label if label is not None else self._auto_label()
         self.channels.append(Channel(assigned, value, text))
         self._rebuild()

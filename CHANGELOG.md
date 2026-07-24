@@ -18,8 +18,41 @@ ambiguity to resolve about major/minor/patch.
   `HEX 0x0000_0000`, with nothing to distinguish that from the whole answer
   and nothing explaining why READOUT disagreed with RESULT.
 
+### Added
+
+- Alt+G puts a keyboard cursor on the register grid: arrows move it,
+  Shift+arrows drag out a bit range (the same field readout the mouse drag
+  gives), space toggles the bit under it, Esc puts the keys back. The grid
+  was previously reachable only with a mouse, in an app whose contract is
+  that everything is on the keyboard.
+
+### Fixed
+
+- The result base and float-view status chips advertised Alt+B and Alt+F in
+  their tooltips long after those keys became bash-style word-jump in the
+  input line — following either moved the cursor instead. Both the tooltip
+  and the key binding now come from one table, and the README keyboard
+  reference is corrected (it also gained the missing Alt+P and Alt+Shift+F).
+- Mode chips no longer elide their own labels ("FLOAT OFF" as "FL…FF",
+  "unsigned" as "un…ed" at the minimum window size). Each chip is sized for
+  the widest label it can hold, which also stops the status bar shuffling
+  sideways as you toggle modes.
+- A register field and its bit range can no longer wrap apart in the field
+  table ("CMD" on one line, "[7:0] = 0xF3" on the next).
+
 ### Changed
 
+- The history pane is captioned like every other zone (HISTORY / HELP /
+  VARIABLES), so switching to variables or a help topic no longer swaps in a
+  similar-looking list with nothing naming it.
+- A short history now sits against the input line instead of floating at the
+  top of a mostly empty pane — the newest result is next to where you type.
+  Once entries overflow, scrolling behaves exactly as before.
+- Pinning a value that is already in the rack reports "already pinned as C1"
+  instead of adding an indistinguishable duplicate strip.
+- The preview line elides overlong text with an ellipsis and offers the full
+  string as a tooltip, rather than stopping at the edge with no sign that
+  anything was cut.
 - Transient confirmations ("pinned C1", "deleted x", a CSR definition) now
   appear on the preview line under the input instead of the status bar, where
   the mode chips left them 46-58px — every message past about eight characters

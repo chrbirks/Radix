@@ -39,6 +39,12 @@ class ZoneCaption(QWidget):
     def text(self) -> str:
         return self._text
 
+    def set_text(self, text: str) -> None:
+        if text == self._text:
+            return
+        self._text = text
+        self.update()
+
     def set_palette(self, palette: Palette) -> None:
         self._muted = palette.muted
         self._hairline = palette.hairline
