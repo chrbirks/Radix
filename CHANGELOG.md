@@ -20,6 +20,9 @@ ambiguity to resolve about major/minor/patch.
 
 ### Added
 
+- An empty history pane now shows worked examples — SI suffixes, a bit-op,
+  `clkdiv`, a CSR definition and `help` — instead of a blank pane above an
+  all-zero register panel. It disappears on the first result.
 - Alt+G puts a keyboard cursor on the register grid: arrows move it,
   Shift+arrows drag out a bit range (the same field readout the mouse drag
   gives), space toggles the bit under it, Esc puts the keys back. The grid
@@ -39,6 +42,10 @@ ambiguity to resolve about major/minor/patch.
   sideways as you toggle modes.
 - A register field and its bit range can no longer wrap apart in the field
   table ("CMD" on one line, "[7:0] = 0xF3" on the next).
+- The input placeholder no longer runs off the edge of a minimum-width
+  window (it was cut mid-word at 520px).
+- Pinned channel strips line up with the 12px gutter every other inspector
+  zone uses, instead of running flush to the window edge.
 
 ### Changed
 

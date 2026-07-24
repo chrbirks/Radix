@@ -20,8 +20,13 @@ from PySide6.QtCore import (
     QSize,
     Qt,
 )
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPaintEvent
+from PySide6.QtWidgets import (
+    QListView,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+)
 
 from radix.engine.values import Value
 from radix.ui_qt.theme import Palette
@@ -135,6 +140,85 @@ def _scaled(base: QFont, factor: float) -> QFont:
     else:
         font.setPointSizeF(max(1.0, base.pointSizeF() * factor))
     return font
+
+
+# Kept short enough that both columns fit the 520px minimum window; the
+# painter elides and drops trailing rows anyway if a theme's metrics differ.
+EMPTY_HINT: tuple[tuple[str, str], ...] = (
+    ("4.7k * 2", "SI and binary prefixes"),
+    ("0xFF << 2", "hex/dec/bin + bit grid"),
+    ("clkdiv(50M, 115200)", "the FPGA toolkit"),
+    ("csr CTRL = EN[31]", "name and decode registers"),
+    ("help", "everything else  (F1)"),
+)
+HINT_GAP = 20  # between the example column and its description
+HINT_LINE = 26
+
+
+class HistoryView(QListView):
+    """History list that shows worked examples while it is empty.
+
+    A cold start otherwise offered a placeholder line and an all-zero register
+    panel — nothing about SI suffixes, the FPGA toolkit or CSR decoding, which
+    is most of why the tool exists.
+    """
+
+    def __init__(self, palette: Palette) -> None:
+        super().__init__()
+        self.palette_tokens = palette
+
+    def set_palette(self, palette: Palette) -> None:
+        self.palette_tokens = palette
+        self.viewport().update()
+
+    def _is_empty(self) -> bool:
+        model = self.model()
+        return model is None or model.rowCount() == 0
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if not self._is_empty():
+            return
+        painter = QPainter(self.viewport())
+        p = self.palette_tokens
+        example_font = _scaled(self.font(), 1.0)
+        note_font = _scaled(self.font(), 0.85)
+        example_metrics = QFontMetrics(example_font)
+        note_metrics = QFontMetrics(note_font)
+        column = max(example_metrics.horizontalAdvance(text) for text, _ in EMPTY_HINT)
+        width = column + HINT_GAP + max(
+            note_metrics.horizontalAdvance(note) for _, note in EMPTY_HINT
+        )
+        rect = self.viewport().rect()
+        # Only draw the rows that actually fit: a half-painted last line reads
+        # as breakage, and this pane can be as short as PANE_MIN_H.
+        rows = min(len(EMPTY_HINT), max(0, (rect.height() - 2 * ROW_PAD_TOP) // HINT_LINE))
+        if rows == 0:
+            painter.end()
+            return
+        left = max(ROW_PAD_H, (rect.width() - width) // 2)
+        note_left = left + column + HINT_GAP
+        note_width = rect.width() - note_left - ROW_PAD_H
+        top = max(ROW_PAD_TOP, (rect.height() - rows * HINT_LINE) // 2)
+        for row, (example, note) in enumerate(EMPTY_HINT[:rows]):
+            y = top + row * HINT_LINE
+            painter.setFont(example_font)
+            painter.setPen(QColor(p.syn_number))
+            painter.drawText(
+                QRect(left, y, column, HINT_LINE),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                example,
+            )
+            if note_width <= 0:
+                continue  # too narrow for the second column; examples alone
+            painter.setFont(note_font)
+            painter.setPen(QColor(p.muted))
+            painter.drawText(
+                QRect(note_left, y, note_width, HINT_LINE),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                note_metrics.elidedText(note, Qt.TextElideMode.ElideRight, note_width),
+            )
+        painter.end()
 
 
 class HistoryDelegate(QStyledItemDelegate):

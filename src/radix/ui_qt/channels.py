@@ -25,6 +25,7 @@ MINI_STRIP_H = 12
 STRIP_PAD = 6
 MINI_NIBBLE_GAP = 3
 MINI_CELL_GAP = 1
+RACK_GUTTER = 12  # matches the 12px side gutter the other inspector zones use
 
 
 @dataclass
@@ -267,7 +268,9 @@ class ChannelsRack(QWidget):
         self.hint_label.setProperty("class", "chanHint")
 
         self.layout_ = QVBoxLayout(self)
-        self.layout_.setContentsMargins(0, 0, 0, 0)
+        # Side gutter matching the PINNED caption above and every other zone
+        # in the inspector; the strips used to run flush to the window edge.
+        self.layout_.setContentsMargins(RACK_GUTTER, 0, RACK_GUTTER, 0)
         self.layout_.setSpacing(4)
         self.layout_.addWidget(self.hint_label)
 

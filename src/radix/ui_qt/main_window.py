@@ -43,7 +43,12 @@ from radix.history.store import HistoryStore, StoredEntry
 from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Session
 from radix.ui_qt.completer import Completer
 from radix.ui_qt.highlight import ExprHighlighter
-from radix.ui_qt.history_model import HistoryDelegate, HistoryEntry, HistoryModel
+from radix.ui_qt.history_model import (
+    HistoryDelegate,
+    HistoryEntry,
+    HistoryModel,
+    HistoryView,
+)
 from radix.ui_qt.input_edit import InputBar
 from radix.ui_qt.inspector import Inspector
 from radix.ui_qt.settings import app_settings, load_session, load_state, save_session, save_state
@@ -164,7 +169,7 @@ class MainWindow(QMainWindow):
 
         self.model = HistoryModel()
         self.delegate = HistoryDelegate(palette)
-        self.history_view = QListView()
+        self.history_view = HistoryView(palette)
         self.history_view.setObjectName("history")
         self.history_view.setModel(self.model)
         self.history_view.setItemDelegate(self.delegate)
@@ -253,7 +258,10 @@ class MainWindow(QMainWindow):
         self.input_bar = InputBar()
         self.input = self.input_bar.input
         self.preview = self.input_bar.preview
-        self.input.setPlaceholderText("type an expression — help for the basics")
+        # Fits the 520px minimum window; the old wording ran 70px past the
+        # input's right edge there and simply got cut. The empty history pane
+        # carries the longer "here's what this thing does" version.
+        self.input.setPlaceholderText("type an expression — try help")
         self.input.submitted.connect(self._evaluate)
         self.input.textChanged.connect(self._schedule_preview)
         self.input.installEventFilter(self)
@@ -673,6 +681,11 @@ class MainWindow(QMainWindow):
         tracking — behaves exactly as it did.
         """
         view = self.history_view
+        if self.model.rowCount() == 0:
+            # Nothing to push down, and padding the whole pane away would leave
+            # a zero-height viewport that never paints the empty-state hint.
+            view.setViewportMargins(0, 0, 0, 0)
+            return
         content = sum(view.sizeHintForRow(row) for row in range(self.model.rowCount()))
         # Measure against the height the viewport would have with no padding —
         # viewport() already excludes the margin we set last time, so using it
@@ -1190,6 +1203,7 @@ class MainWindow(QMainWindow):
     def apply_palette(self, palette: Palette) -> None:
         self.palette_tokens = palette
         self.delegate.set_palette(palette)
+        self.history_view.set_palette(palette)
         self._update_theme_chip()
         self.result_caption.set_palette(palette)
         self.inspector.set_palette(palette)

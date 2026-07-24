@@ -397,7 +397,7 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QLabel.chanHint {{
         color: {p.muted};
         font-size: {FONT_SMALL}px;
-        padding: 4px 12px;
+        padding: 4px 0px;
     }}
     QLabel.refTag {{
         color: {p.bit_changed};

@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics  # noqa: E402
 
 from radix.engine.values import Value  # noqa: E402
 from radix.session import Session  # noqa: E402
@@ -2020,6 +2021,67 @@ def test_overlong_preview_text_elides_with_a_tooltip(qtbot, styled_window: MainW
     assert styled_window.preview.toolTip() == "x" * 300
     needed = styled_window.preview.fontMetrics().horizontalAdvance(styled_window.preview.text())
     assert needed <= styled_window.preview.width()
+
+
+# -- cold start ----------------------------------------------------------------------
+
+
+def test_placeholder_fits_the_minimum_window(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The old wording ran ~70px past the input's right edge and was just cut."""
+    styled_window.resize(520, 600)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    edit = styled_window.input
+    needed = edit.fontMetrics().horizontalAdvance(edit.placeholderText())
+    assert needed <= edit.viewport().width(), (
+        f"placeholder needs {needed}px, input viewport is {edit.viewport().width()}px"
+    )
+
+
+def test_empty_history_pane_shows_worked_examples(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.ui_qt.history_model import EMPTY_HINT
+
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    qtbot.wait(10)  # let the deferred padding resync actually run
+    view = styled_window.history_view
+    assert view._is_empty()
+    # The hint is painted, so assert the state it paints from plus the room to
+    # do it: a zero-height viewport silently skips paintEvent altogether.
+    assert view.viewport().height() > 0
+    assert view.viewportMargins().top() == 0  # no bottom-padding with no rows
+    assert len(EMPTY_HINT) >= 3
+
+    _submit(qtbot, styled_window, "1+1")
+    assert not view._is_empty()  # real entries take over
+
+
+def test_empty_history_hint_fits_the_minimum_window(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Both hint columns have to fit, or the descriptions run off the edge."""
+    from radix.ui_qt.history_model import EMPTY_HINT, HINT_GAP, _scaled
+
+    styled_window.resize(520, 600)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    view = styled_window.history_view
+    example_metrics = view.fontMetrics()
+    note_metrics = QFontMetrics(_scaled(view.font(), 0.85))
+    column = max(example_metrics.horizontalAdvance(text) for text, _ in EMPTY_HINT)
+    widest_note = max(note_metrics.horizontalAdvance(note) for _, note in EMPTY_HINT)
+    assert column + HINT_GAP + widest_note <= view.viewport().width()
+
+
+def test_pinned_strips_share_the_inspector_gutter(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The strips ran flush to the window edge while every caption was inset."""
+    from radix.ui_qt.channels import RACK_GUTTER
+
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    _submit(qtbot, styled_window, "0xABCD")
+    styled_window._pin_last_result()
+    qtbot.wait(1)
+    margins = styled_window.channels.layout_.contentsMargins()
+    assert (margins.left(), margins.right()) == (RACK_GUTTER, RACK_GUTTER)
 
 
 # -- word-size truncation is never silent --------------------------------------
