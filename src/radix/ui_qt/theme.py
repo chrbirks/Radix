@@ -263,6 +263,13 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QLabel#preview[state="error"] {{
         color: {p.error};
     }}
+    QScrollArea#inspectorScroll {{
+        background: {p.background};
+        border: none;
+    }}
+    QScrollArea#inspectorScroll > QWidget > QWidget {{
+        background: {p.background};
+    }}
     QWidget#intview {{
         border-top: 1px solid {p.hairline};
     }}
@@ -299,6 +306,12 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
         color: {p.muted};
         font-size: {FONT_SMALL}px;
         padding: 1px 6px;
+    }}
+    QLabel.truncNote {{
+        color: {p.warn};
+        font-family: "{label}";
+        font-size: {FONT_MICRO}px;
+        padding: 2px 0px;
     }}
     QLabel.sliceNote {{
         color: {p.bit_changed};

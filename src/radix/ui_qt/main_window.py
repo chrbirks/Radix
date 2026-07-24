@@ -14,16 +14,19 @@ import json
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QLabel,
     QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTextEdit,
     QToolButton,
@@ -47,6 +50,44 @@ from radix.ui_qt.theme import LABEL_FAMILY, THEME_MODES, Palette, theme_mode_ico
 from radix.ui_qt.zones import ZoneCaption, margin_wrap
 
 PREVIEW_DEBOUNCE_MS = 100
+INSPECTOR_MIN_H = 160  # scrolls below this rather than squeezing its contents
+PANE_MIN_H = 120  # history/help/vars never collapse to nothing
+
+
+class InspectorScroll(QScrollArea):
+    """Scroll host that asks for the inspector's natural height.
+
+    A bare QScrollArea reports a tiny sizeHint, so the layout would shrink the
+    inspector to a permanent scrolling stub; deferring to the child keeps the
+    panel at full size whenever the window has room. What the scroll area buys
+    is the floor: below `INSPECTOR_MIN_H` the content scrolls instead of being
+    squeezed past its minimum, which is what used to paint `pin result` on top
+    of the bit grid at 64-bit word sizes.
+    """
+
+    def sizeHint(self) -> QSize:
+        inner = self.widget()
+        if inner is None:
+            return super().sizeHint()
+        frame = 2 * self.frameWidth()
+        # max(): a word-size change can leave the inspector's minimum above its
+        # own hint, and asking for less than the minimum would strand the panel
+        # permanently a few pixels scrolled.
+        height = max(inner.sizeHint().height(), inner.minimumSizeHint().height())
+        return QSize(inner.sizeHint().width() + frame, height + frame)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), INSPECTOR_MIN_H)
+
+    def event(self, event: QEvent) -> bool:
+        # A scroll area normally absorbs its child's layout changes — it can
+        # always scroll instead. Here the child's height is what we ask the
+        # window layout for, so the request has to be forwarded upward or the
+        # parent keeps negotiating against a stale hint (e.g. the taller grid
+        # after Alt+W switches to a 64-bit word).
+        if event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().event(event)
 
 SHORTCUT_HELP = """Keyboard shortcuts
   Enter        evaluate          Up / Down    recall history
@@ -145,6 +186,15 @@ class MainWindow(QMainWindow):
         self.pane_stack.addWidget(self.help_pane)
         self.pane_stack.addWidget(self.vars_pane)
         self.pane_stack.setCurrentWidget(self.history_view)
+        # This is the elastic zone: it already scrolls, so it should absorb
+        # every pixel of slack in either direction and let the fixed-content
+        # zones below have exactly what they ask for. Ignored (rather than a
+        # stretch factor alone) drops its own height hint from the negotiation,
+        # so a long history can no longer shave pixels off the inspector.
+        self.pane_stack.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
+        )
+        self.pane_stack.setMinimumHeight(PANE_MIN_H)
 
         self.result_caption = ZoneCaption("RESULT")
         self.result_caption.set_palette(palette)
@@ -172,6 +222,15 @@ class MainWindow(QMainWindow):
         self.completer = Completer(self.input, session, palette)
 
         self.inspector = Inspector(palette, lambda text: QApplication.clipboard().setText(text))
+        self.inspector_scroll = InspectorScroll()
+        self.inspector_scroll.setObjectName("inspectorScroll")
+        self.inspector_scroll.setWidget(self.inspector)
+        self.inspector_scroll.setWidgetResizable(True)  # reflow the bit grid by width
+        self.inspector_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.inspector_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # never steal focus
+        # Horizontal never: every child already reflows to the viewport width,
+        # so a horizontal bar would only ever mean a layout bug.
+        self.inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.vizpanel = self.inspector.vizpanel
         self.intview = self.inspector.intview
         self.channels = self.inspector.channels
@@ -186,7 +245,7 @@ class MainWindow(QMainWindow):
         self.root_layout.addWidget(margin_wrap(self.result_caption, 12))
         self.root_layout.addWidget(self.result_label)
         self.root_layout.addWidget(self.input_bar)
-        self.root_layout.addWidget(self.inspector)
+        self.root_layout.addWidget(self.inspector_scroll)
         self.setCentralWidget(root)
 
         self._build_status_bar()
@@ -202,7 +261,11 @@ class MainWindow(QMainWindow):
         self.toast_timer.setInterval(1800)
         self.toast_timer.timeout.connect(lambda: self.toast_label.setText(""))
 
-        self.resize(600, 800)  # default size; replaced by restored geometry below
+        # Default sized so the widest case — a 64-bit word, whose bit grid
+        # wraps to four rows — fits without scrolling. Smaller windows are
+        # still fine (the inspector scrolls), this just picks a first-run size
+        # that doesn't start out scrolled. Replaced by restored geometry below.
+        self.resize(640, 880)
         if self.store is not None:
             load_session(self.session)
             load_state(self.session)
@@ -226,7 +289,7 @@ class MainWindow(QMainWindow):
             if s.value("always_on_top", False, type=bool):
                 self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             if not s.value("inspector_visible", True, type=bool):
-                self.inspector.hide()
+                self.inspector_scroll.hide()
             stored_mode = s.value("theme_mode", "auto", type=str)
             if stored_mode in THEME_MODES:
                 self.theme_mode = stored_mode
@@ -846,8 +909,10 @@ class MainWindow(QMainWindow):
         self._toast("always on top" if on_top else "normal stacking")
 
     def _toggle_inspector(self) -> None:
+        # Toggles the scroll host, not the inspector inside it: hiding only the
+        # inner widget would leave an empty scroll frame holding the space.
         visible = not self.inspector.isVisibleTo(self)
-        self.inspector.setVisible(visible)
+        self.inspector_scroll.setVisible(visible)
         if self.store is not None:
             app_settings().setValue("inspector_visible", visible)
         self._toast("inspector shown" if visible else "inspector hidden")

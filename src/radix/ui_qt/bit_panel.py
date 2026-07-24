@@ -361,6 +361,13 @@ class IntegerView(QWidget):
         self.readout_caption.set_palette(palette)
         self.register_caption = ZoneCaption("REGISTER")
         self.register_caption.set_palette(palette)
+        # Sits directly above the lanes it qualifies: every lane below masks to
+        # the word size, so without this a value too wide for the word reads as
+        # a complete answer that silently disagrees with RESULT.
+        self.trunc_note = QLabel("")
+        self.trunc_note.setProperty("class", "truncNote")
+        self.trunc_note.setWordWrap(True)
+        self.trunc_note.setVisible(False)
         grid = QGridLayout()
         grid.setContentsMargins(12, 8, 12, 4)
         grid.setHorizontalSpacing(10)
@@ -414,6 +421,7 @@ class IntegerView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         layout.addWidget(margin_wrap(self.readout_caption, 12))
+        layout.addWidget(margin_wrap(self.trunc_note, 12))
         layout.addLayout(grid)
         layout.addWidget(margin_wrap(self.register_caption, 12))
         layout.addWidget(self.grid_widget)
@@ -513,6 +521,7 @@ class IntegerView(QWidget):
             self._refresh_float(self.float_mode)
             return
         views = integer_views(self.scratch, self.word_size)
+        self._set_trunc_note(views.truncated and self.active, views.value_bits)
         dec_text = views.dec_unsigned
         if views.dec_signed != views.dec_unsigned:
             dec_text = f"{views.dec_unsigned}  ({views.dec_signed})"
@@ -566,6 +575,19 @@ class IntegerView(QWidget):
         self._update_slice_label()
         self._refresh_field_table()
 
+    def _set_trunc_note(self, truncated: bool, value_bits: int) -> None:
+        self.trunc_note.setVisible(truncated)
+        if not truncated:
+            self.trunc_note.setText("")
+            return
+        self.trunc_note.setText(
+            f"truncated — low {self.word_size} bits of a {value_bits}-bit value"
+        )
+        self.trunc_note.setToolTip(
+            "the lanes and bit grid below are masked to the word size; "
+            "cycle it with Alt+W to see the whole value"
+        )
+
     def _refresh_field_table(self) -> None:
         if self.csr is None or not self.active:
             self.field_table.setVisible(False)
@@ -607,6 +629,7 @@ class IntegerView(QWidget):
         The scratch value is untouched — leaving float mode restores the
         integer view exactly as it was.
         """
+        self._set_trunc_note(False, 0)  # the pattern is the whole value here
         self._copy_texts = {
             "HEX": views.hex,
             "SGN": views.sign_text,

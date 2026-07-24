@@ -21,6 +21,32 @@ def window(qtbot):  # type: ignore[no-untyped-def]
     return win
 
 
+@pytest.fixture
+def styled_window(qtbot, qapp):  # type: ignore[no-untyped-def]
+    """A window carrying the real application stylesheet, like `app.run_gui`.
+
+    Every other test here runs bare, where the default system font is small
+    enough that the panels always fit. Layout defects only show up at the
+    stylesheet's actual type sizes, so anything asserting geometry has to pay
+    for the real thing — that gap is why a full green suite still shipped a
+    bit grid with `pin result` painted across it.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    from radix.ui_qt import theme
+
+    mono, label = theme.load_bundled_font()
+    previous_sheet = qapp.styleSheet()
+    previous_style = qapp.style().objectName()
+    qapp.setStyle("Fusion")  # widget metrics differ per style; match run_gui
+    qapp.setStyleSheet(theme.stylesheet(LIGHT, mono, label))
+    win = MainWindow(Session(), LIGHT)
+    qtbot.addWidget(win)
+    yield win
+    qapp.setStyleSheet(previous_sheet)
+    QApplication.setStyle(previous_style)
+
+
 def _submit(qtbot, window: MainWindow, text: str) -> None:  # type: ignore[no-untyped-def]
     window.input.setText(text)
     qtbot.keyClick(window.input, Qt.Key.Key_Return)
@@ -1551,6 +1577,153 @@ def test_register_csr_cells_stay_clickable_and_draggable(qtbot, window: MainWind
     grid.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 0, Qt.MouseButton.LeftButton))
     grid.mouseReleaseEvent(mouse(QEvent.Type.MouseButtonRelease, 0, Qt.MouseButton.NoButton))
     assert window.intview.scratch == before ^ 1  # plain click still toggles
+
+
+# -- inspector layout: never squeeze, scroll instead ---------------------------
+#
+# These assert widget geometry rather than constants: the failure they guard
+# against was Qt shrinking the integer panel past its minimum until `pin
+# result` painted on top of the bit grid and the wrapped BIN lane was clipped.
+# Every check derives from the widgets themselves, so they stay honest if the
+# panel's contents change.
+
+
+def _settle(qtbot, window: MainWindow, size: tuple[int, int], word_size: int) -> None:  # type: ignore[no-untyped-def]
+    """Drive the window to a steady state at `size` showing a `word_size` word.
+
+    A word-size change resizes the bit grid, which posts a LayoutRequest that
+    the inspector's scroll host forwards to the window layout — so the geometry
+    these tests read is only final once those posted events have been
+    delivered. Spin the loop until it stops moving instead of guessing a delay.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(*size)
+    window.show()
+    qtbot.waitExposed(window)
+    _submit(qtbot, window, "0xDEADBEEFCAFEBABE")
+    while window.session.word_size != word_size:
+        window._cycle_word_size()
+    previous = None
+    for _ in range(10):
+        QApplication.processEvents()
+        current = window.intview.grid_widget.geometry()
+        if current == previous:
+            return
+        previous = current
+    raise AssertionError("inspector layout never settled")
+
+
+def _pin_button(window: MainWindow):  # type: ignore[no-untyped-def]
+    from PySide6.QtWidgets import QPushButton
+
+    return next(
+        b for b in window.intview.findChildren(QPushButton) if b.text() == "pin result"
+    )
+
+
+@pytest.mark.parametrize("size", [(520, 600), (600, 800), (640, 880), (900, 700)])
+@pytest.mark.parametrize("word_size", [8, 32, 64])
+def test_actions_row_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, size: tuple[int, int], word_size: int
+) -> None:
+    _settle(qtbot, styled_window, size, word_size)
+    grid = styled_window.intview.grid_widget
+    button = _pin_button(styled_window)
+    grid_bottom = grid.mapTo(styled_window.intview, grid.rect().bottomLeft()).y()
+    button_top = button.mapTo(styled_window.intview, button.rect().topLeft()).y()
+    assert button_top >= grid_bottom, (
+        f"{size} at {word_size}-bit: 'pin result' overlaps the bit grid by "
+        f"{grid_bottom - button_top}px"
+    )
+
+
+@pytest.mark.parametrize("size", [(520, 600), (640, 880)])
+@pytest.mark.parametrize("word_size", [32, 64])
+def test_bit_grid_shows_every_row_it_reports(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, size: tuple[int, int], word_size: int
+) -> None:
+    _settle(qtbot, styled_window, size, word_size)
+    grid = styled_window.intview.grid_widget
+    assert grid.height() >= grid.minimumHeight()  # all wrapped rows drawable
+
+
+@pytest.mark.parametrize("size", [(520, 600), (640, 880)])
+@pytest.mark.parametrize("word_size", [32, 64])
+def test_wrapped_lanes_are_not_clipped(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, size: tuple[int, int], word_size: int
+) -> None:
+    """BIN wraps to four lines at 64-bit; the row has to grow to match."""
+    _settle(qtbot, styled_window, size, word_size)
+    for name, lane in styled_window.intview.rows.items():
+        label = lane[1]
+        assert label.height() >= label.heightForWidth(label.width()), (
+            f"{name} lane clipped at {size} / {word_size}-bit"
+        )
+
+
+def test_inspector_scrolls_when_the_window_is_too_short(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _settle(qtbot, styled_window, (520, 600), 64)
+    scroll = styled_window.inspector_scroll
+    assert scroll.verticalScrollBar().maximum() > 0  # reachable by scrolling
+    assert styled_window.intview.height() >= styled_window.intview.minimumSizeHint().height()
+
+
+@pytest.mark.parametrize("size", [(520, 600), (600, 800), (640, 880)])
+def test_integer_panel_is_never_squeezed_below_its_minimum(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, size: tuple[int, int]
+) -> None:
+    """The invariant behind every overlap: the panel gets the height it asks for.
+
+    Deliberately not asserting "no scrollbar at the default size" — whether the
+    default fits depends on font DPI and widget style, so that would be a flaky
+    proxy for this, which is the property that actually has to hold.
+    """
+    _settle(qtbot, styled_window, size, 64)
+    intview = styled_window.intview
+    assert intview.height() >= intview.minimumSizeHint().height()
+
+
+# -- word-size truncation is never silent --------------------------------------
+
+
+def test_truncation_note_appears_when_value_outgrows_word(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "2**200")
+    assert window.intview.rows["HEX"][1].text() == "0x0000_0000"  # the misleading part
+    assert window.intview.trunc_note.isVisibleTo(window.intview)
+    assert window.intview.trunc_note.text() == "truncated — low 32 bits of a 201-bit value"
+
+
+def test_truncation_note_hidden_when_the_value_fits(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "0xFF << 2")
+    assert not window.intview.trunc_note.isVisibleTo(window.intview)
+
+
+def test_truncation_note_follows_the_word_size(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "0xDEADBEEF")
+    assert not window.intview.trunc_note.isVisibleTo(window.intview)  # fits 32 bits
+    window._cycle_word_size()  # 32 -> 64: still fits
+    assert not window.intview.trunc_note.isVisibleTo(window.intview)
+    window._cycle_word_size()  # 64 -> 8: no longer fits
+    assert window.intview.trunc_note.isVisibleTo(window.intview)
+    assert "low 8 bits of a 32-bit value" in window.intview.trunc_note.text()
+
+
+def test_truncation_note_hidden_in_float_view(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """An IEEE-754 pattern is the whole value, never a masked slice of one."""
+    _submit(qtbot, window, "2**200")
+    assert window.intview.trunc_note.isVisibleTo(window.intview)
+    window._toggle_float_view()
+    _submit(qtbot, window, "2.5")
+    assert window.intview.float_mode is not None
+    assert not window.intview.trunc_note.isVisibleTo(window.intview)
+
+
+def test_truncation_note_hidden_on_the_empty_panel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "2**200")
+    assert window.intview.trunc_note.isVisibleTo(window.intview)
+    _submit(qtbot, window, "clear")
+    assert not window.intview.trunc_note.isVisibleTo(window.intview)
 
 
 def test_vars_pane_csr_row_right_click_deletes(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mpmath
+import pytest
 
 from radix.engine.formatter import format_int_base, format_real, integer_views
 from radix.session import Session
@@ -44,6 +45,37 @@ def test_integer_views_grouping_and_signedness() -> None:
     assert views.hex == "0xFF"
     assert views.dec_unsigned == "255"
     assert views.dec_signed == "-1"
+
+
+@pytest.mark.parametrize(
+    ("value", "word_size", "value_bits", "truncated"),
+    [
+        (0, 8, 0, False),
+        (255, 8, 8, False),  # widest unsigned that still fits
+        (256, 8, 9, True),
+        (-128, 8, 8, False),  # widest negative that still fits
+        (-129, 8, 9, True),
+        (-1, 8, 1, False),
+        (0xDEADBEEFCAFEBABE, 64, 64, False),
+        (0xDEADBEEFCAFEBABE, 32, 64, True),
+        (2**200, 32, 201, True),
+    ],
+)
+def test_integer_views_reports_word_size_truncation(
+    value: int, word_size: int, value_bits: int, truncated: bool
+) -> None:
+    """The lanes always mask, so they have to say when masking lost something."""
+    views = integer_views(value, word_size)
+    assert (views.value_bits, views.truncated) == (value_bits, truncated)
+
+
+def test_bits_needed_matches_round_trip_through_the_word() -> None:
+    """`truncated` is exactly "the masked value no longer reads back"."""
+    for value in (0, 1, 127, 128, 255, 256, -1, -127, -128, -129, 5000, -5000):
+        for word_size in (8, 16, 32):
+            views = integer_views(value, word_size)
+            recovered = int(views.dec_signed) if value < 0 else int(views.dec_unsigned)
+            assert (recovered != value) == views.truncated
 
 
 def test_float_views_double() -> None:

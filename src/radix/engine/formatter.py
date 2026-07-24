@@ -42,6 +42,12 @@ class IntegerViews:
     dec_signed: str
     binary: str
     ascii: str  # one char per byte, MSB first; "." for non-printable bytes
+    # Every view above is masked to `word_size`, so a value too wide for the
+    # word renders as its low bits and nothing in the text says so. These two
+    # let the display flag that, instead of presenting a masked pattern as if
+    # it were the whole answer.
+    value_bits: int = 0  # narrowest word size that would render `value` exactly
+    truncated: bool = False  # value_bits > word_size: the views lost information
 
 
 @dataclass(frozen=True)
@@ -163,10 +169,24 @@ def format_int_base(value: int, base: str, word_size: int) -> str:
     raise ValueError(f"unknown base {base!r}")
 
 
+def bits_needed(value: int) -> int:
+    """Narrowest word size that renders `value` exactly in one of the two lanes.
+
+    A non-negative value needs its plain bit length (it reads off the unsigned
+    lane); a negative one needs a two's-complement sign bit on top (it reads
+    off the signed lane). ``integer_views`` compares this against the word size
+    to decide whether masking threw information away.
+    """
+    if value >= 0:
+        return value.bit_length()
+    return (~value).bit_length() + 1
+
+
 def integer_views(value: int, word_size: int) -> IntegerViews:
     mask = (1 << word_size) - 1
     wrapped = value & mask
     signed_value = wrapped - (1 << word_size) if wrapped >> (word_size - 1) else wrapped
+    width = bits_needed(value)
     return IntegerViews(
         hex=_group(f"{wrapped:X}", 4, min_width=word_size // 4, prefix="0x"),
         dec_unsigned=str(wrapped),
@@ -176,6 +196,8 @@ def integer_views(value: int, word_size: int) -> IntegerViews:
             chr(b) if 32 <= b < 127 else "."
             for b in wrapped.to_bytes(word_size // 8, "big")
         ),
+        value_bits=width,
+        truncated=width > word_size,
     )
 
 

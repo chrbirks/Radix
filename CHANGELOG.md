@@ -9,8 +9,27 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Added
+
+- The READOUT zone now says when a result is too wide for the current word
+  size — e.g. `truncated — low 8 bits of a 64-bit value` above the lanes.
+  Every lane and the bit grid have always masked to the word size, so
+  `0xDEADBEEFCAFEBABE` at 8 bits read as `HEX 0xBE` and `2**200` at 32 bits as
+  `HEX 0x0000_0000`, with nothing to distinguish that from the whole answer
+  and nothing explaining why READOUT disagreed with RESULT.
+
 ### Changed
 
+- The inspector (visualization card, register view, pinned rack) now scrolls
+  when the window is too short for it, instead of compressing its contents.
+  Below a certain height Qt used to shrink the integer panel past its own
+  minimum, which painted the `pin result` button and the Δ readout across the
+  bit grid and clipped the wrapped BIN lane — worst at a 64-bit word size,
+  where the grid wraps to four rows and the low half of the register could be
+  cut off entirely at the default window size.
+- The default window is now 640x880 (was 600x800), sized so a 64-bit word
+  fits without scrolling on a first run. The minimum size is unchanged;
+  smaller windows scroll rather than break.
 - The live-preview line now shows explicit grouping parentheses for
   mixed-precedence expressions, so a surprising precedence is visible before
   you press Enter — e.g. `x10>>2+h10>>2` previews as `16 >> (2 + 16) >> 2 = 0`,

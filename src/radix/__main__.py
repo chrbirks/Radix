@@ -35,6 +35,11 @@ def run_expression(session: Session, text: str) -> int:
     views = session.views_for(outcome.value)
     if views is not None:
         line = f"{primary}  ({views.hex} | {views.dec_signed} | {views.binary})"
+        if views.truncated:
+            # Same masking the GUI's READOUT does, so it needs the same
+            # caveat: without it `2**200` prints a parenthesised 0x0000_0000
+            # that reads like part of the answer.
+            line += f"  [low {session.word_size} bits of a {views.value_bits}-bit value]"
     else:
         line = primary
     if outcome.value.note:

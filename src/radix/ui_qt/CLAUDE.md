@@ -2,6 +2,25 @@
 
 - QSS px fonts leave `QFont.pointSize()` at −1 — scale via
   `history_model._scaled`, never `setPointSizeF` directly.
+- The inspector lives inside `main_window.InspectorScroll`, and two overrides
+  there are load-bearing — don't simplify it back to a plain `QScrollArea`.
+  (1) `sizeHint` defers to the child, because a bare scroll area reports a
+  tiny hint and the layout would shrink the inspector to a permanent stub.
+  (2) `event()` forwards `LayoutRequest` upward with `updateGeometry()`: a
+  scroll area normally *absorbs* its child's layout changes (it can scroll
+  instead), so without this the window layout keeps negotiating against a
+  stale hint and the panel sits a few pixels scrolled forever after Alt+W
+  grows the bit grid to a 64-bit word. `pane_stack` is `QSizePolicy.Ignored`
+  vertically for the matching reason: it is the elastic zone, so it must not
+  bid for height against the fixed-content zones below it.
+- UI tests run **without** the application stylesheet, where the default
+  system font is small enough that everything fits. Layout defects only
+  appear at the QSS type sizes and under Fusion, so anything asserting
+  geometry must use the `styled_window` fixture in `tests/test_ui_smoke.py`,
+  not the plain `window` one. Be aware that even that fixture did not
+  reproduce the original squeeze — offscreen geometry differs enough from a
+  real session that measuring in a scratch script against a live
+  `MainWindow` is still the authoritative check for layout work.
 - `QFontMetrics` (not just `.horizontalAdvance`) used to segfault under
   `QT_QPA_PLATFORM=offscreen` for glyphs needing font fallback (`→`/`←` in
   help summaries and the RESULT readout, `☀`/`☾`/`◐` in the theme-mode icon),
