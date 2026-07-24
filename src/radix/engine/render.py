@@ -37,7 +37,7 @@ from radix.engine.parser import BINARY_BP, SLICE_BP, UNARY_BP
 from radix.engine.values import Value
 
 _SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-                 "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"}
+                 "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻"}
 
 _OP_DISPLAY = {"*": "×", "^": "XOR"}
 
@@ -99,20 +99,15 @@ def _render_binary(
 ) -> str:
     bp = BINARY_BP[node.op]
     if node.op == "**":
-        exponent = node.right
-        if (
-            isinstance(exponent, Literal)
-            and isinstance(exponent.value, int)
-            and exponent.value >= 0
-        ):
+        superscript = _superscript_exponent(node.right)
+        if superscript is not None:
             inner = _render(node.left, variables, ans, 0)
             base = inner if _is_atom(node.left) else f"({inner})"
-            superscript = "".join(_SUPERSCRIPTS[d] for d in str(exponent.value))
             # A superscript is self-grouping: only *required* parens, never
             # clarifying ones, so `2**3 + 1` stays `2³ + 1`.
             return _paren(base + superscript, bp, parent_bp)
         left = _render(node.left, variables, ans, bp, bp)
-        right = _render(exponent, variables, ans, bp, bp)  # right-assoc
+        right = _render(node.right, variables, ans, bp, bp)  # right-assoc
         return _clarify(f"{left}**{right}", bp, parent_bp, parent_op_bp)
     left = _render(node.left, variables, ans, bp, bp)
     right = _render(node.right, variables, ans, bp + 1, bp)
@@ -140,6 +135,27 @@ def _render_spec_bound(node: Node) -> str:
     if isinstance(node, Literal) and isinstance(node.value, int):
         return str(node.value)
     return _render(node, {}, None, 0)
+
+
+def _superscript_exponent(node: Node) -> str | None:
+    """Superscript text for an integer-literal exponent, or None.
+
+    Handles a plain non-negative literal (``2**10`` → ``¹⁰``) and a negated one
+    (``2**-1`` / ``2**(-1)``, parsed as ``-`` over a literal → ``⁻¹``). Anything
+    else (a variable, a compound expression) returns None so the caller falls
+    back to textual ``**``.
+    """
+    if isinstance(node, Literal) and isinstance(node.value, int) and node.value >= 0:
+        return "".join(_SUPERSCRIPTS[d] for d in str(node.value))
+    if (
+        isinstance(node, Unary)
+        and node.op == "-"
+        and isinstance(node.operand, Literal)
+        and isinstance(node.operand.value, int)
+        and node.operand.value >= 0
+    ):
+        return "".join(_SUPERSCRIPTS[d] for d in f"-{node.operand.value}")
+    return None
 
 
 def _is_atom(node: Node) -> bool:

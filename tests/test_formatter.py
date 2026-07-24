@@ -90,6 +90,10 @@ def test_preview_rendering() -> None:
     assert session.preview("2**10").normalized == "2¹⁰"
     assert session.preview("2**64").normalized == "2⁶⁴"
     assert session.preview("(1+1)**12").normalized == "(1 + 1)¹²"
+    # Negative integer exponents superscript too, with a superscript minus.
+    assert session.preview("2**-1").normalized == "2⁻¹"
+    assert session.preview("2**(-1)").normalized == "2⁻¹"
+    assert session.preview("2**-10").normalized == "2⁻¹⁰"
     # A multi-digit superscript is still a self-grouping atom (no clarifying parens).
     assert session.preview("2**10+1").normalized == "2¹⁰ + 1"
     session.evaluate("x = 0xFF")

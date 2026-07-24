@@ -19,9 +19,9 @@ ambiguity to resolve about major/minor/patch.
 
 ### Fixed
 
-- The preview now renders multi-digit integer exponents as superscripts
-  (`2**10` → `2¹⁰`, `2**64` → `2⁶⁴`), not just single-digit ones; previously
-  any exponent ≥ 10 fell back to the textual `**`.
+- The preview now renders multi-digit and negative integer exponents as
+  superscripts (`2**10` → `2¹⁰`, `2**64` → `2⁶⁴`, `2**-1` → `2⁻¹`); previously
+  any exponent outside `0`–`9` fell back to the textual `**`.
 - History entries with a real (non-integer) result now keep reformatting when
   you cycle the result notation (AUTO/SCI/ENG/…) after a restart. Previously
   only integer results survived a restart with a reformattable value; reals
