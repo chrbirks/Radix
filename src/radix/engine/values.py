@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 # independent and much lower; see formatter.py.
 WORKING_DPS = 25
 
+# Ceiling on the magnitude of a real, stated in the same currency as the
+# evaluator's integer ceiling (MAX_POW_RESULT_BITS): about a million bits, so
+# reals top out near 10**301030 just as exact ints do. Two costs sit behind it.
+# An mpf is ``man * 2**exp``, and decimal conversion works in the size of that
+# *exponent* — measured at ~0ms for a 61-bit exponent, 0.6s at 5k bits, 22s at
+# 20k, and a hard failure past ~14k where the decimal exponent outgrows Python's
+# int->str limit. Separately, any handler converting a real back to int (fix(),
+# clkdiv()) materializes that many bits. Holding reals and ints to one budget
+# keeps either from blowing past the other.
+MAX_MAGNITUDE_BITS = 1_000_000
+
 # mpmath ships no type stubs, so mpf is Any to the type checker.
 Mpf: TypeAlias = Any
 Number: TypeAlias = int | Mpf
@@ -56,9 +67,21 @@ def set_working_precision() -> None:
 set_working_precision()
 
 
-def as_int_exact(n: Number) -> int | None:
-    """Return the value as an exact int if it is one, else None (no coercion)."""
-    return n if isinstance(n, int) else None
+def magnitude_fits(n: Number) -> bool:
+    """True if ``n`` is small enough to render and convert in bounded time.
+
+    Exact ints always qualify — their width is already bounded where they are
+    produced, by the evaluator's result guards. Reals qualify while their binary
+    exponent stays inside ``MAX_MAGNITUDE_BITS``, in either direction: a value
+    too close to zero is as dangerous as a huge one, since ``period()``/``freq()``
+    take its reciprocal.
+    """
+    if isinstance(n, int):
+        return True
+    if not mpmath.isfinite(n):
+        return False
+    _sign, _man, exp, bc = n._mpf_
+    return abs(int(exp + bc)) <= MAX_MAGNITUDE_BITS
 
 
 def value_to_json(value: Value) -> dict[str, Any]:
@@ -84,16 +107,36 @@ def value_to_json(value: Value) -> dict[str, Any]:
     }
 
 
+def _int_or_raise(raw: object, what: str) -> int:
+    # bool is an int subclass; a stored `true` is corruption, not a width.
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(f"{what} is not an integer")
+    return raw
+
+
 def value_from_json(data: dict[str, Any]) -> Value:
-    """Inverse of ``value_to_json``. Raises on malformed data."""
+    """Inverse of ``value_to_json``. Raises on malformed data.
+
+    Shape validation is strict rather than best-effort: ``make_mpf`` accepts any
+    4-tuple without checking it, so a malformed one would build a Value that
+    only blows up much later, at display time, far from this call. *Range* is
+    deliberately not policed here — this codec round-trips faithfully, including
+    inf; deciding what a session may hold is ``Session.load_state_json``'s job.
+    """
     from radix.engine.csr import csr_from_json
 
     number_data = data["number"]
     number: Number
     if number_data["kind"] == "int":
-        number = number_data["value"]
+        number = _int_or_raise(number_data["value"], "stored integer")
     else:
-        number = mpmath.make_mpf(tuple(number_data["mpf"]))
+        parts = number_data["mpf"]
+        if not isinstance(parts, list) or len(parts) != 4:
+            raise ValueError("stored real is not a 4-part mpf tuple")
+        number = mpmath.make_mpf(tuple(_int_or_raise(p, "mpf component") for p in parts))
+    width = data["declared_width"]
+    if width is not None:
+        _int_or_raise(width, "declared_width")
     csr_data = data["csr"]
     return Value(
         number=number,

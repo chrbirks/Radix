@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import mpmath
+import pytest
 
 from radix.engine.csr import Csr, CsrField, csr_from_json, csr_to_json
 from radix.engine.values import Value, value_from_json, value_to_json
@@ -36,6 +37,58 @@ def test_value_to_json_roundtrips_special_reals() -> None:
     for x in (mpmath.mpf(0), mpmath.mpf("-2.5"), mpmath.inf, -mpmath.inf, mpmath.mpf("1e400")):
         restored = value_from_json(json.loads(json.dumps(value_to_json(Value(x)))))
         assert restored.number == x
+
+
+def test_load_state_survives_wrong_typed_sections() -> None:
+    # The state blob lives in an editable INI file, so a wrong shape has to fall
+    # back to defaults rather than raise out of MainWindow's constructor.
+    for blob in ({"variables": [1, 2]}, {"csrs": "nope"}, {"variables": None}):
+        session = Session()
+        session.load_state_json(blob)
+        assert session.variables == {}
+        assert session.csrs == {}
+
+
+def test_load_state_drops_malformed_entries_but_keeps_the_rest() -> None:
+    good = value_to_json(Value(42))
+    session = Session()
+    session.load_state_json(
+        {"variables": {"ok": good, "bad": {"number": {"kind": "int", "value": "not an int"}}}}
+    )
+    assert list(session.variables) == ["ok"]
+
+
+def test_load_state_rejects_a_malformed_mpf_tuple() -> None:
+    # make_mpf accepts any tuple without checking it, so a short one would only
+    # blow up later, while formatting.
+    session = Session()
+    session.load_state_json(
+        {
+            "variables": {
+                "x": {
+                    "number": {"kind": "real", "mpf": [0, 1, 2]},
+                    "declared_width": None,
+                    "prefer_si": False,
+                    "note": None,
+                    "csr": None,
+                }
+            }
+        }
+    )
+    assert session.variables == {}
+
+
+def test_load_state_drops_out_of_range_values() -> None:
+    # Live results pass guard_displayable before being committed; a value edited
+    # straight into the file never met that guard.
+    session = Session()
+    session.load_state_json({"ans": value_to_json(Value(mpmath.inf))})
+    assert session.ans is None
+
+
+def test_csr_from_json_rejects_out_of_range_field_bits() -> None:
+    with pytest.raises(ValueError, match="field bit index"):
+        csr_from_json({"name": "X", "fields": [{"name": "A", "msb": 10**5000, "lsb": 0}]})
 
 
 def test_value_to_json_roundtrips_nested_csr() -> None:

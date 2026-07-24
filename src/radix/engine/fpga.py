@@ -24,6 +24,11 @@ from radix.engine.values import Number, Value
 from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz
 
 MAX_MASK_BITS = 1_000_000
+# mem() sizing converts to float for the capacity string and the utilization
+# bar, which overflows above ~1.8e308. Capping each dimension keeps the product
+# (and so every derived float) comfortably inside that, at a ceiling no real
+# device comes near.
+MAX_MEM_DIM = 1 << 64
 
 
 def _int_arg(args: list[Number], i: int, what: str) -> int:
@@ -205,6 +210,8 @@ def _mem(args: list[Number], ctx: EvalContext) -> Value:
     width = _int_arg(args, 1, "mem")
     if depth <= 0 or width <= 0:
         raise FunctionDomainError("mem: depth and width must be positive")
+    if depth > MAX_MEM_DIM or width > MAX_MEM_DIM:
+        raise FunctionDomainError("mem: depth and width must be at most 2**64")
     addr_bits = (depth - 1).bit_length()
     addressable = 1 << addr_bits
     total_bits = depth * width

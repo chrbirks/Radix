@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import mpmath
 
-from radix.engine.values import Number, Value
+from radix.engine.values import Number, Value, magnitude_fits
 
 DISPLAY_DIGITS = 12
 # Plain notation is used in auto mode when the decimal exponent is in this range.
@@ -42,7 +42,6 @@ class IntegerViews:
     dec_signed: str
     binary: str
     ascii: str  # one char per byte, MSB first; "." for non-printable bytes
-    fits_word: bool  # False if the true value needed more bits than the word
 
 
 @dataclass(frozen=True)
@@ -114,7 +113,14 @@ def format_number(value: Value, notation: Notation = "auto") -> str:
         notation = "eng_si"
     if isinstance(n, int):
         if notation == "auto":
-            return str(n)
+            try:
+                return str(n)
+            except ValueError:
+                # Python caps int->str width (sys.set_int_max_str_digits), and
+                # the evaluator's result guard permits ints far wider than that
+                # cap. Such a result is still worth showing — just not
+                # digit-for-digit — so fall back to scientific notation.
+                return format_real(mpmath.mpf(n), "sci")
         return format_real(mpmath.mpf(n), notation)
     return format_real(n, notation)
 
@@ -122,6 +128,11 @@ def format_number(value: Value, notation: Notation = "auto") -> str:
 def format_real(x: mpmath.mpf, notation: Notation = "auto") -> str:
     if x == 0:
         return "0"
+    if not magnitude_fits(x):
+        # Defensive only: guard_displayable rejects these before they can reach
+        # a display path. Bail out *before* _significant_digits, since decimal
+        # conversion is the unbounded step (minutes, then a hard failure).
+        return "-overflow" if x < 0 else "overflow"
     digits, exponent = _significant_digits(x, DISPLAY_DIGITS)
     negative = x < 0
     if notation == "auto":
@@ -155,7 +166,6 @@ def format_int_base(value: int, base: str, word_size: int) -> str:
 def integer_views(value: int, word_size: int) -> IntegerViews:
     mask = (1 << word_size) - 1
     wrapped = value & mask
-    fits = -(1 << (word_size - 1)) <= value <= mask if value < 0 else value <= mask
     signed_value = wrapped - (1 << word_size) if wrapped >> (word_size - 1) else wrapped
     return IntegerViews(
         hex=_group(f"{wrapped:X}", 4, min_width=word_size // 4, prefix="0x"),
@@ -166,7 +176,6 @@ def integer_views(value: int, word_size: int) -> IntegerViews:
             chr(b) if 32 <= b < 127 else "."
             for b in wrapped.to_bytes(word_size // 8, "big")
         ),
-        fits_word=fits,
     )
 
 

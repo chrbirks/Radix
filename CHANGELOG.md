@@ -16,9 +16,34 @@ ambiguity to resolve about major/minor/patch.
   you press Enter — e.g. `x10>>2+h10>>2` previews as `16 >> (2 + 16) >> 2 = 0`,
   making it clear that `+` binds tighter than `>>`. Same-precedence chains
   (`a + b + c`) and superscript powers (`2³ + 1`) stay paren-free.
+- Pinning a value that already has a channel (an assignment pinned under its
+  variable name) now updates that channel instead of adding a second one with
+  the same label.
+- `mem()` now rejects a depth or width above `2**64`, and CSR field indices
+  above 4095, rather than accepting numbers no device could have.
 
 ### Fixed
 
+- Results too wide to print in full — anything past about 4300 digits, such as
+  `2**20000` — now display in scientific notation (`3.98027684034e+6020`)
+  instead of doing nothing at all. Previously the whole line silently failed:
+  no result, no history entry, no error, with only a traceback on a stderr
+  nobody sees. An *assignment* was worse, committing the variable before the
+  failure, after which the variables pane and every expression naming it broke
+  too, across restarts. Hex and binary display were never affected, so the same
+  expression appeared to work or vanish depending on the result base.
+- Expressions whose result runs away in magnitude — `exp(2**20000)` and the
+  like — now report `result is out of range` immediately. Previously they took
+  22 seconds and then failed, or never finished at all, freezing the window:
+  the live preview evaluates while you type, so this could hit mid-keystroke.
+  The error points at the innermost call that produced the value.
+- `1**n`, `0**n` and `(-1)**n` with a huge `n` are no longer rejected as
+  `result too large`; they are one digit whatever the exponent.
+- A corrupt or hand-edited config file no longer stops Radix from starting.
+  Wrong-shaped stored state, a malformed real, an out-of-range CSR field, and a
+  pinned-channel REF marker pointing past the channels that survived were all
+  unhandled; each now falls back to a default and keeps whatever else loaded.
+- Commands separated by a tab rather than a space (`del⇥x`) are now recognized.
 - The preview now renders multi-digit and negative integer exponents as
   superscripts (`2**10` → `2¹⁰`, `2**64` → `2⁶⁴`, `2**-1` → `2⁻¹`); previously
   any exponent outside `0`–`9` fell back to the textual `**`.

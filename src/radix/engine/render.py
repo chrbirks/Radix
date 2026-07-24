@@ -41,6 +41,14 @@ _SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
 
 _OP_DISPLAY = {"*": "×", "^": "XOR"}
 
+# A superscript is a readability aid — past a handful of digits it stops being
+# one. The cap also keeps this off str()'s int->digit limit, which matters
+# because the preview renders *before* evaluation: without it an exponent too
+# wide to print would crash here rather than reaching the evaluator's own
+# "result too large".
+MAX_SUPERSCRIPT_DIGITS = 6
+_MAX_SUPERSCRIPT = 10**MAX_SUPERSCRIPT_DIGITS
+
 
 def render(
     node: Node, variables: Mapping[str, Value], ans: Value | None
@@ -121,20 +129,18 @@ def _render_spec(node: Node) -> str:
     for leaf in flatten_spec(node):
         if isinstance(leaf, Slice) and isinstance(leaf.operand, Name):
             name = leaf.operand.ident
-            lsb = _render_spec_bound(leaf.lsb)
+            # Bounds go through _render like any other literal: its formatting
+            # already matches what a bare str() gave, and it stays safe for a
+            # value too wide to print (the preview runs before evaluation, so
+            # an out-of-range bound reaches here before anything rejects it).
+            lsb = _render(leaf.lsb, {}, None, 0)
             if leaf.msb is None:
                 parts.append(f"{name}[{lsb}]")
             else:
-                parts.append(f"{name}[{_render_spec_bound(leaf.msb)}:{lsb}]")
+                parts.append(f"{name}[{_render(leaf.msb, {}, None, 0)}:{lsb}]")
         else:
             parts.append(_render(leaf, {}, None, 0))
     return " ".join(parts)
-
-
-def _render_spec_bound(node: Node) -> str:
-    if isinstance(node, Literal) and isinstance(node.value, int):
-        return str(node.value)
-    return _render(node, {}, None, 0)
 
 
 def _superscript_exponent(node: Node) -> str | None:
@@ -145,14 +151,18 @@ def _superscript_exponent(node: Node) -> str | None:
     else (a variable, a compound expression) returns None so the caller falls
     back to textual ``**``.
     """
-    if isinstance(node, Literal) and isinstance(node.value, int) and node.value >= 0:
+    if (
+        isinstance(node, Literal)
+        and isinstance(node.value, int)
+        and 0 <= node.value < _MAX_SUPERSCRIPT
+    ):
         return "".join(_SUPERSCRIPTS[d] for d in str(node.value))
     if (
         isinstance(node, Unary)
         and node.op == "-"
         and isinstance(node.operand, Literal)
         and isinstance(node.operand.value, int)
-        and node.operand.value >= 0
+        and 0 <= node.operand.value < _MAX_SUPERSCRIPT
     ):
         return "".join(_SUPERSCRIPTS[d] for d in f"-{node.operand.value}")
     return None

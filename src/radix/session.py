@@ -34,7 +34,12 @@ from radix.engine.functions import CONSTANTS, FUNCTIONS, EvalContext
 from radix.engine.lexer import tokenize
 from radix.engine.nodes import Assign
 from radix.engine.parser import parse
-from radix.engine.values import Value, value_from_json, value_to_json
+from radix.engine.values import (
+    Value,
+    magnitude_fits,
+    value_from_json,
+    value_to_json,
+)
 
 WORD_SIZES = (8, 16, 32, 64)
 NOTATIONS = ("auto", "sci", "eng", "eng_si")
@@ -121,7 +126,7 @@ class Session:
             value = evaluator.evaluate(
                 node.expr, self.context, self.variables, self.ans, csrs=self.csrs
             )
-            value = evaluator.guard_finite(value, node.expr.span)
+            value = evaluator.guard_displayable(value, node.expr.span)
             if commit:
                 self.variables[node.target] = value
                 self.ans = value
@@ -129,14 +134,18 @@ class Session:
         value = evaluator.evaluate(
             node, self.context, self.variables, self.ans, csrs=self.csrs
         )
-        value = evaluator.guard_finite(value, node.span)
+        value = evaluator.guard_displayable(value, node.span)
         if commit:
             self.ans = value
         return Outcome("value", value, normalized=preview)
 
     def _command(self, line: str, commit: bool) -> Outcome | None:
-        word, _, rest = line.partition(" ")
-        rest = rest.strip()
+        # Split on any whitespace run, so `del<TAB>x` is the command it looks
+        # like rather than a bare identifier the parser then rejects. `line` is
+        # stripped and non-empty by the time we get here, so parts[0] exists.
+        parts = line.split(None, 1)
+        word = parts[0]
+        rest = parts[1].strip() if len(parts) > 1 else ""
         if word == "help":
             if rest.startswith("="):
                 return None  # `help = ...` is an assignment attempt → reserved-name error
@@ -268,17 +277,39 @@ class Session:
 
     def load_state_json(self, data: dict[str, Any]) -> None:
         """Inverse of ``state_to_json``. Skips individual malformed entries
-        rather than discarding the whole stored state."""
+        rather than discarding the whole stored state.
+
+        Every container is type-checked before iteration: this parses a file a
+        user can edit (or that a half-finished write can truncate), so a wrong
+        shape must degrade to defaults, never raise into the caller's startup.
+        """
+
+        def section(key: str) -> dict[str, Any]:
+            raw = data.get(key)
+            return raw if isinstance(raw, dict) else {}
+
+        def restore(entry: Any) -> Value | None:
+            """A stored value, or None if it is malformed or out of range.
+
+            The range check matters because the file is editable: live results
+            pass guard_displayable before they are ever committed, but a value
+            typed straight into the config never met that guard.
+            """
+            try:
+                value = value_from_json(entry)
+            except (KeyError, TypeError, ValueError):
+                return None
+            return value if magnitude_fits(value.number) else None
+
         variables: dict[str, Value] = {}
-        for name, entry in data.get("variables", {}).items():
+        for name, entry in section("variables").items():
             if name in RESERVED_NAMES:
                 continue
-            try:
-                variables[name] = value_from_json(entry)
-            except (KeyError, TypeError, ValueError):
-                continue
+            value = restore(entry)
+            if value is not None:
+                variables[name] = value
         csrs: dict[str, Csr] = {}
-        for name, entry in data.get("csrs", {}).items():
+        for name, entry in section("csrs").items():
             if name in RESERVED_NAMES or name in variables:
                 continue
             try:
@@ -288,10 +319,6 @@ class Session:
         self.variables = variables
         self.csrs = csrs
         ans_data = data.get("ans")
-        if ans_data is not None:
-            try:
-                self.ans = value_from_json(ans_data)
-            except (KeyError, TypeError, ValueError):
-                self.ans = None
+        self.ans = restore(ans_data) if ans_data is not None else None
 
 __all__ = ["Session", "Outcome", "CalcError", "WORD_SIZES", "NOTATIONS", "INT_BASES"]

@@ -8,6 +8,14 @@ from typing import Any
 from radix.engine.errors import EvalError, Span
 from radix.engine.nodes import Binary, Literal, Name, Node, Slice
 
+# Field indices come straight from user literals and are interpolated into spec
+# text and error messages, so they are bounded when the layout is built. The
+# ceiling sits far above the largest word size (64) — a csr may legitimately be
+# defined wider than the word it is currently decoded against, which is what
+# produces the "outside the N-bit word" error — but low enough that every
+# downstream f-string stays a few characters wide.
+MAX_FIELD_BIT = 4095
+
 
 @dataclass(frozen=True)
 class CsrField:
@@ -69,6 +77,11 @@ def csr_from_nodes(nodes: list[Node], name: str | None) -> Csr:
                     "field ranges must be literal integers, e.g. ADDR[27:8]", leaf.msb.span
                 )
             msb = msb_val
+        # Bound before any message interpolates these: an index wide enough to
+        # exceed Python's int->str limit would crash the formatting of the very
+        # error meant to reject it.
+        if max(msb, lsb) > MAX_FIELD_BIT:
+            raise EvalError(f"field bit index must be 0..{MAX_FIELD_BIT}", leaf.span)
         if msb < lsb:
             raise EvalError(
                 f"invalid field range [{msb}:{lsb}] — msb must be >= lsb", leaf.span
@@ -98,11 +111,26 @@ def csr_to_json(csr: Csr) -> dict[str, Any]:
 
 
 def csr_from_json(data: dict[str, Any]) -> Csr:
-    """Inverse of ``csr_to_json``. Raises on malformed data."""
+    """Inverse of ``csr_to_json``. Raises on malformed data.
+
+    Bounds are re-checked rather than trusted: this reads an editable config
+    file, and an out-of-range index restored here would only surface later,
+    while formatting the message meant to reject it.
+    """
     fields = tuple(
-        CsrField(f["name"], f["msb"], f["lsb"]) for f in data["fields"]
+        CsrField(str(f["name"]), _field_bit(f["msb"]), _field_bit(f["lsb"]))
+        for f in data["fields"]
     )
+    if not fields:
+        raise ValueError("csr has no fields")
     return Csr(data["name"], fields)
+
+
+def _field_bit(raw: object) -> int:
+    # bool is an int subclass; a stored `true` is corruption, not a bit index.
+    if not isinstance(raw, int) or isinstance(raw, bool) or not 0 <= raw <= MAX_FIELD_BIT:
+        raise ValueError(f"field bit index must be 0..{MAX_FIELD_BIT}")
+    return raw
 
 
 def format_field_value(field: CsrField, value: int) -> str:

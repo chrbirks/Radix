@@ -1104,6 +1104,58 @@ def test_pin_assignment_uses_variable_name(qtbot, window: MainWindow) -> None:  
     assert window.channels.channels[0].label == "x"
 
 
+def test_repinning_a_name_updates_its_strip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Two strips under one label are indistinguishable in the rack.
+    _submit(qtbot, window, "x = 5")
+    window._history_action("pin", 0)
+    _submit(qtbot, window, "x = 9")
+    window._history_action("pin", 1)
+    assert [c.label for c in window.channels.channels] == ["x"]
+    assert window.channels.channels[0].text == "9"
+
+
+def test_channel_restore_tolerates_a_stale_ref_index(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # A ref pointing past the restored channels used to raise IndexError, which
+    # MainWindow's suppress() does not cover — the app then failed to start.
+    window.channels.restore(
+        {"ref": 3, "channels": []}, window.session.format_value, window.session.word_size
+    )
+    assert window.channels.ref_index is None
+    window._on_ref_changed()
+
+
+def test_channel_restore_skips_corrupt_entries(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window.channels.restore(
+        {
+            "ref": 0,
+            "channels": [
+                {"label": "C1", "kind": "int", "int": 255},
+                {"label": "C2", "kind": "int", "int": "not an int"},
+            ],
+        },
+        window.session.format_value,
+        window.session.word_size,
+    )
+    assert [c.label for c in window.channels.channels] == ["C1"]
+    assert window.channels.ref_index == 0
+
+
+def test_wide_int_result_reaches_history_and_readout(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # This used to raise out of _evaluate mid-way: the value was committed, but
+    # no history entry, result label or toast ever appeared — a silent no-op.
+    _submit(qtbot, window, "2**20000")
+    assert window.model.entries[-1].result == "3.98027684034e+6020"
+    assert window.result_label.text() == "3.98027684034e+6020"
+    assert window.input.text() == ""
+
+
+def test_out_of_range_result_shows_an_error(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window.input.setText("exp(2**20000)")
+    window._update_preview()
+    assert window.preview.text() == "result is out of range"
+    assert window.preview.property("state") == "error"
+
+
 def test_alt_p_pins_last_result(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     assert window.session.ans is None
     window._pin_last_result()

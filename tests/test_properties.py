@@ -31,7 +31,16 @@ expression_alphabet = st.text(
 def test_engine_is_total(text: str) -> None:
     session = Session()
     with contextlib.suppress(CalcError):  # CalcError is the only permitted escape
-        session.evaluate(text)
+        outcome = session.evaluate(text)
+        # Display counts as part of the engine's contract: formatting used to
+        # raise ValueError/OverflowError on results evaluation accepted happily,
+        # and stopping at evaluate() is exactly why that went unnoticed. (The
+        # preview renderer is already covered — evaluate() builds it eagerly.)
+        # See test_limits.py for the specific magnitudes involved.
+        if outcome.value is not None:
+            session.format_value(outcome.value)
+            session.views_for(outcome.value)
+            session.float_views_for(outcome.value)
 
 
 @given(

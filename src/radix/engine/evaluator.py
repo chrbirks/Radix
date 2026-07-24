@@ -38,7 +38,7 @@ from radix.engine.nodes import (
     Slice,
     Unary,
 )
-from radix.engine.values import Number, Value
+from radix.engine.values import Number, Value, magnitude_fits
 
 # Guards against pathological input.
 MAX_POW_RESULT_BITS = 1_000_000
@@ -173,7 +173,14 @@ class _Evaluator:
     def _power(self, node: Binary, a: Number, b: Number) -> Value:
         if isinstance(a, int) and isinstance(b, int):
             if b >= 0:
-                result_bits = b * max(1, abs(a).bit_length())
+                if -1 <= a <= 1:
+                    # 0, 1 and -1 stay one digit at any exponent, so the
+                    # bit-length estimate below would wrongly reject trivially
+                    # cheap results like 1**10000000.
+                    if a == 1 or b == 0:
+                        return Value(1)  # x**0 == 1, including 0**0
+                    return Value(0 if a == 0 else (-1 if b % 2 else 1))
+                result_bits = b * abs(a).bit_length()
                 if result_bits > MAX_POW_RESULT_BITS:
                     raise EvalError("result too large", node.span)
                 return Value(a**b)
@@ -234,7 +241,12 @@ class _Evaluator:
                 result = spec.handler(args, self.ctx)
             except FunctionDomainError as exc:
                 raise EvalError(str(exc), node.span) from exc
-            return result if isinstance(result, Value) else Value(result)
+            value = result if isinstance(result, Value) else Value(result)
+            # Guard every call result, not just the line's final value: some
+            # handlers pre-format their argument into a note or viz payload, so
+            # a runaway has to be stopped at the call that produced it rather
+            # than one level further out.
+            return guard_displayable(value, node.span)
         if self.csrs and node.func in self.csrs:
             return self._csr_call(node)
         raise EvalError(f"unknown function {node.func!r}", node.func_span)
@@ -318,9 +330,20 @@ class _Evaluator:
             raise EvalError("division by zero", span)
 
 
-def guard_finite(value: Value, span: Span) -> Value:
-    """Reject inf/nan results so they never reach display."""
+def guard_displayable(value: Value, span: Span) -> Value:
+    """Reject results that could never be rendered, so they never reach display.
+
+    Two ways that happens: inf/nan, and a real whose binary exponent has grown
+    so large that decimal conversion cannot finish in bounded time (see
+    ``values.MAX_MAGNITUDE_BITS``). Both are runaway intermediates rather than
+    answers anyone asked for, and letting either through means the UI either
+    hangs or dies formatting it.
+    """
     n = value.number
-    if not isinstance(n, int) and not mpmath.isfinite(n):
+    if isinstance(n, int):
+        return value
+    if not mpmath.isfinite(n):
         raise EvalError("result is not finite", span)
+    if not magnitude_fits(n):
+        raise EvalError("result is out of range", span)
     return value

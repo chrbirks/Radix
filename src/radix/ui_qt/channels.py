@@ -289,6 +289,15 @@ class ChannelsRack(QWidget):
     # -- mutation ---------------------------------------------------------------
 
     def pin(self, value: Value, text: str, label: str | None) -> str | None:
+        # Re-pinning a named value (an assignment) updates its existing strip
+        # instead of adding a second one under the same label — two identically
+        # labelled channels are indistinguishable in the rack.
+        if label is not None:
+            for i, existing in enumerate(self.channels):
+                if existing.label == label:
+                    self.channels[i] = Channel(label, value, text)
+                    self._rebuild()
+                    return label
         if len(self.channels) >= MAX_CHANNELS:
             return None
         assigned = label if label is not None else self._auto_label()
@@ -336,15 +345,33 @@ class ChannelsRack(QWidget):
         return {"ref": self.ref_index, "channels": channels}
 
     def restore(self, blob: dict[str, Any], fmt: Callable[[Value], str], word_size: int) -> None:
+        """Rebuild the rack from a persisted blob, tolerating a corrupt one.
+
+        Individual bad entries are skipped rather than losing the whole rack,
+        and `ref` is validated against the channels that actually survived —
+        an out-of-range index would otherwise raise IndexError straight out of
+        MainWindow's constructor, leaving the app unable to start.
+        """
         channels: list[Channel] = []
-        for entry in blob["channels"]:
-            if entry["kind"] == "int":
-                value = Value(entry["int"])
-                channels.append(Channel(entry["label"], value, fmt(value)))
-            else:
-                channels.append(Channel(entry["label"], None, entry["text"]))
+        for entry in blob["channels"][:MAX_CHANNELS]:
+            try:
+                label = str(entry["label"])
+                if entry["kind"] == "int":
+                    raw = entry["int"]
+                    if not isinstance(raw, int) or isinstance(raw, bool):
+                        continue
+                    value = Value(raw)
+                    channels.append(Channel(label, value, fmt(value)))
+                else:
+                    channels.append(Channel(label, None, str(entry["text"])))
+            except (KeyError, TypeError, ValueError):
+                continue
         self.channels = channels
-        self.ref_index = blob.get("ref")
+        ref = blob.get("ref")
+        valid_ref = (
+            isinstance(ref, int) and not isinstance(ref, bool) and 0 <= ref < len(channels)
+        )
+        self.ref_index = ref if valid_ref else None
         self.word_size = word_size
         self._rebuild()
 
