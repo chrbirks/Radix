@@ -402,11 +402,11 @@ class IntegerView(QWidget):
 
         actions = QHBoxLayout()
         actions.setContentsMargins(12, 0, 12, 8)
-        pin_btn = QPushButton("pin result")
-        pin_btn.setProperty("class", "copyBtn")
-        pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        pin_btn.clicked.connect(self._emit_pin_requested)
-        actions.addWidget(pin_btn)
+        self.pin_btn = QPushButton("pin result")
+        self.pin_btn.setProperty("class", "copyBtn")
+        self.pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pin_btn.clicked.connect(self._emit_pin_requested)
+        actions.addWidget(self.pin_btn)
         self.delta_label = QLabel("")
         self.delta_label.setProperty("class", "deltaNote")
         self.delta_label.setToolTip("set bits gained/lost vs. the previous value")
@@ -504,6 +504,9 @@ class IntegerView(QWidget):
             name_label.setText(key)
             value_label.setText(text)
             value_label.setToolTip(text)
+            # `copy_base` refuses on a dimmed panel, so the button has to look
+            # refused too — an enabled control that does nothing reads as a bug.
+            copy_btn.setEnabled(not dimmed)
             for w in (name_label, value_label):
                 w.setProperty("dimmed", "true" if dimmed else "false")
                 w.style().unpolish(w)
@@ -522,6 +525,7 @@ class IntegerView(QWidget):
             return
         views = integer_views(self.scratch, self.word_size)
         self._set_trunc_note(views.truncated and self.active, views.value_bits)
+        self._sync_pin_button()
         dec_text = views.dec_unsigned
         if views.dec_signed != views.dec_unsigned:
             dec_text = f"{views.dec_unsigned}  ({views.dec_signed})"
@@ -574,6 +578,16 @@ class IntegerView(QWidget):
         )
         self._update_slice_label()
         self._refresh_field_table()
+
+    def _sync_pin_button(self) -> None:
+        """`_emit_pin_requested` needs an integer scratch; say so up front.
+
+        Float view and the empty panel both leave it inert, and Alt+P already
+        answers "nothing to pin" — the button should not look more capable
+        than the shortcut it duplicates.
+        """
+        self.pin_btn.setEnabled(self.active)
+        self.pin_btn.setToolTip("" if self.active else "no integer result to pin")
 
     def _set_trunc_note(self, truncated: bool, value_bits: int) -> None:
         self.trunc_note.setVisible(truncated)
@@ -630,6 +644,7 @@ class IntegerView(QWidget):
         integer view exactly as it was.
         """
         self._set_trunc_note(False, 0)  # the pattern is the whole value here
+        self._sync_pin_button()
         self._copy_texts = {
             "HEX": views.hex,
             "SGN": views.sign_text,

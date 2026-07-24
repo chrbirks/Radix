@@ -263,6 +263,9 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QLabel#preview[state="error"] {{
         color: {p.error};
     }}
+    QLabel#preview[state="toast"] {{
+        color: {p.accent};
+    }}
     QScrollArea#inspectorScroll {{
         background: {p.background};
         border: none;
@@ -301,6 +304,10 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QPushButton.copyBtn:hover {{
         color: {p.accent};
         border-color: {p.accent};
+    }}
+    QPushButton.copyBtn:disabled {{
+        color: {p.bit_off};
+        border-color: {p.bit_off};
     }}
     QLabel.deltaNote {{
         color: {p.muted};

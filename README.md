@@ -147,6 +147,7 @@ always-on-top, window geometry — persist across restarts in a plain INI file
 | Enter            | evaluate                                               |
 | Tab / Ctrl+Space | insert / open completions                              |
 | Up / Down        | recall history (or navigate completions)               |
+| Up/Down, PgUp/Dn | scroll the help or variables pane while it is showing  |
 | Ctrl+L           | clear the history view                                 |
 | Ctrl+Shift+C     | copy last result                                       |
 | F1 or `help`     | help pane (Esc dismisses)                              |

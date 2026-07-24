@@ -1186,13 +1186,13 @@ def test_alt_p_pins_last_result(qtbot, window: MainWindow) -> None:  # type: ign
     assert window.session.ans is None
     window._pin_last_result()
     assert window.channels.channels == []
-    assert window.toast_label.text() == "nothing to pin"
+    assert window.preview.text() == "nothing to pin"
 
     _submit(qtbot, window, "3 + 4")
     window._pin_last_result()
     assert len(window.channels.channels) == 1
     assert window.channels.channels[0].label == "C1"
-    assert window.toast_label.text() == "pinned C1"
+    assert window.preview.text() == "pinned C1"
 
 
 def test_channel_rack_caps_at_max_channels(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1203,7 +1203,7 @@ def test_channel_rack_caps_at_max_channels(qtbot, window: MainWindow) -> None:  
     assert len(window.channels.channels) == 8
     window._pin_value(Value(99), None)
     assert len(window.channels.channels) == 8
-    assert window.toast_label.text() == "pinned rack full -- unpin one"
+    assert window.preview.text() == "pinned rack full -- unpin one"
 
 
 def test_base_cycle_reformats_pinned_channel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1525,7 +1525,7 @@ def test_register_csr_cleared_by_plain_number(qtbot, window: MainWindow) -> None
 
 def test_csr_command_toasts_and_refreshes_vars_pane(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _define_ctrl_csr(qtbot, window)
-    assert "CTRL" in window.toast_label.text()
+    assert "CTRL" in window.preview.text()
     window._show_vars()
     texts = [window.vars_pane.item(i).text() for i in range(window.vars_pane.count())]
     assert any("CTRL" in t for t in texts)
@@ -1682,6 +1682,127 @@ def test_integer_panel_is_never_squeezed_below_its_minimum(  # type: ignore[no-u
     _settle(qtbot, styled_window, size, 64)
     intview = styled_window.intview
     assert intview.height() >= intview.minimumSizeHint().height()
+
+
+# -- toasts are readable ---------------------------------------------------------
+
+
+def test_toast_shows_on_the_preview_line_in_full(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The status bar left the CSR confirmation ~50px; it rendered as `csr`."""
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    _submit(qtbot, styled_window, "csr CTRL = EN[31] IRQ[30:28] ADDR[27:8] CMD[7:0]")
+    preview = styled_window.preview
+    assert preview.text() == "csr CTRL = EN[31] IRQ[30:28] ADDR[27:8] CMD[7:0]"
+    needed = preview.fontMetrics().horizontalAdvance(preview.text())
+    assert needed <= preview.width(), f"toast needs {needed}px, has {preview.width()}px"
+
+
+def test_toast_is_styled_apart_from_preview_and_error(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "x = 1")
+    assert window.preview.property("state") == "ok"
+    _submit(qtbot, window, "del x")
+    assert window.preview.property("state") == "toast"
+
+
+def test_toast_survives_the_debounced_preview_after_input_clears(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Commands clear the input, which schedules a preview that would erase it."""
+    _submit(qtbot, window, "x = 1")
+    _submit(qtbot, window, "del x")
+    window._update_preview()  # what the debounce timer fires on an empty line
+    assert window.preview.text() == "deleted x"
+
+
+def test_typing_replaces_a_toast(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "x = 1")
+    _submit(qtbot, window, "del x")
+    window.input.setText("1 + 2")
+    window._update_preview()
+    assert window.preview.text() == "1 + 2 = 3"
+    assert window.preview.property("state") == "ok"
+
+
+# -- help and vars get the window; the input keeps driving them -------------------
+
+
+def test_help_takes_the_inspector_space_and_gives_it_back(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    assert window.inspector.isVisibleTo(window)
+    window._show_help()
+    assert not window.inspector.isVisibleTo(window)
+    window._hide_help()
+    assert window.inspector.isVisibleTo(window)
+
+
+def test_help_does_not_reopen_an_inspector_the_user_closed(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window._toggle_inspector()  # user hides it deliberately
+    assert not window.inspector.isVisibleTo(window)
+    window._show_help()
+    window._hide_help()
+    assert not window.inspector.isVisibleTo(window)  # stays as the user left it
+
+
+def test_alt_i_while_help_is_showing_takes_over(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window._show_help()
+    window._toggle_inspector()  # explicitly ask for it back over the help pane
+    assert window.inspector.isVisibleTo(window)
+    window._hide_help()
+    assert window.inspector.isVisibleTo(window)  # not re-hidden by pane arbitration
+
+
+def test_scroll_keys_drive_the_help_pane_not_history_recall(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The input keeps focus, so help had no keyboard scrolling at all."""
+    for text in ("1+1", "2+2"):
+        _submit(qtbot, window, text)
+    window.resize(640, 880)
+    window.show()
+    qtbot.waitExposed(window)
+    window._show_help()
+    qtbot.wait(1)
+    scrollbar = window.help_pane.verticalScrollBar()
+    assert scrollbar.maximum() > 0  # taller than the pane, so scrolling matters
+    qtbot.keyClick(window.input, Qt.Key.Key_PageDown)
+    assert scrollbar.value() > 0
+    assert window.input.text() == ""  # not swallowed into history recall
+
+
+def test_scroll_keys_still_recall_history_on_the_history_pane(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "1+1")
+    qtbot.keyClick(window.input, Qt.Key.Key_Up)
+    assert window.input.text() == "1+1"
+
+
+# -- controls that cannot act say so ---------------------------------------------
+
+
+def test_panel_buttons_disabled_when_there_is_nothing_to_act_on(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    intview = window.intview
+    assert not intview.pin_btn.isEnabled()  # empty panel
+    _submit(qtbot, window, "0xFF")
+    assert intview.pin_btn.isEnabled()
+    _submit(qtbot, window, "2.5")  # float greys the panel
+    assert not intview.pin_btn.isEnabled()
+
+
+def test_copy_buttons_follow_the_lanes_they_copy(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Copy works in float view (there are lanes) but not on an empty panel."""
+    first_copy = window.intview._row_widgets[0][2]
+    assert not first_copy.isEnabled()
+    window._toggle_float_view()
+    _submit(qtbot, window, "2.5")
+    assert window.intview.float_mode is not None
+    assert first_copy.isEnabled()
+    assert not window.intview.pin_btn.isEnabled()  # no integer scratch to pin
+
+
+# -- long results stay reachable ---------------------------------------------------
+
+
+def test_long_result_is_available_in_full_via_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The row elides at the edge, so the untruncated text needs a home."""
+    _submit(qtbot, window, "2**200")
+    tooltip = window.model.data(window.model.index(0), Qt.ItemDataRole.ToolTipRole)
+    assert str(2**200) in tooltip
+    assert "2**200" in tooltip
 
 
 # -- word-size truncation is never silent --------------------------------------

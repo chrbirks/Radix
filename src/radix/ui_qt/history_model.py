@@ -89,6 +89,11 @@ class HistoryModel(QAbstractListModel):
             return entry.note
         if role == PREFIX_ROLE:
             return entry.prefix
+        if role == Qt.ItemDataRole.ToolTipRole:
+            # The delegate elides both lines to the row width, so a long result
+            # (`2**200`) is readable somewhere without going via the context
+            # menu's copy.
+            return f"{entry.expression}\n= {entry.result}"
         return None
 
     def append(self, entry: HistoryEntry) -> None:
@@ -176,7 +181,11 @@ class HistoryDelegate(QStyledItemDelegate):
         painter.setPen(QColor(p.muted))
         expr_rect = QRect(rect.left(), y, rect.width(), expr_h)
         painter.drawText(
-            expr_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, expression
+            expr_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            QFontMetrics(expr_font).elidedText(
+                expression, Qt.TextElideMode.ElideRight, expr_rect.width()
+            ),
         )
         y += expr_h + LINE_GAP
 
@@ -210,10 +219,18 @@ class HistoryDelegate(QStyledItemDelegate):
 
         painter.setFont(result_font)
         painter.setPen(QColor(p.text))
+        # Elide rather than let the text run off the row: a 61-digit `2**200`
+        # used to end flush at the edge mid-digit, indistinguishable from a
+        # result that just happened to fit. The full text is in the tooltip.
+        value_rect = QRect(
+            x, result_rect.top(), max(0, result_rect.right() - x), result_rect.height()
+        )
         painter.drawText(
-            QRect(x, result_rect.top(), max(0, result_rect.right() - x), result_rect.height()),
+            value_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            display_result,
+            result_metrics.elidedText(
+                display_result, Qt.TextElideMode.ElideRight, value_rect.width()
+            ),
         )
 
         if note:

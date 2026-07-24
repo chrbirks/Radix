@@ -20,6 +20,26 @@ ambiguity to resolve about major/minor/patch.
 
 ### Changed
 
+- Transient confirmations ("pinned C1", "deleted x", a CSR definition) now
+  appear on the preview line under the input instead of the status bar, where
+  the mode chips left them 46-58px — every message past about eight characters
+  was cut off, so defining `csr CTRL = EN[31] IRQ[30:28] ADDR[27:8] CMD[7:0]`
+  confirmed with the word `csr`.
+- The help and variables panes now take the inspector's space while they are
+  showing (it returns on Esc), so the help overview gets the window rather
+  than the ~240px the inspector left it. Help also wraps to the window now:
+  the function and operator tables reflow while keeping their columns
+  aligned. The two hand-aligned blocks (basics, shortcuts) still keep their
+  layout and can scroll sideways in a narrow window, as before.
+- Up/Down and PageUp/PageDown scroll the help or variables pane while one is
+  showing — the input line always holds focus, so there was previously no way
+  to scroll either from the keyboard at all.
+- `pin result` and the per-lane `copy` buttons are now disabled when there is
+  nothing to act on (an empty panel, or `pin` in the IEEE-754 view) instead of
+  looking available and doing nothing.
+- Long history entries now elide with an ellipsis and carry the full
+  expression and result in a tooltip, rather than running off the edge
+  mid-digit with nothing to indicate text was cut.
 - The inspector (visualization card, register view, pinned rack) now scrolls
   when the window is too short for it, instead of compressing its contents.
   Below a certain height Qt used to shrink the integer panel past its own

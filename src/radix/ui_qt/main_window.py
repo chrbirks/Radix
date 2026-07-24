@@ -17,6 +17,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractSlider,
     QApplication,
     QFrame,
     QLabel,
@@ -94,6 +95,7 @@ SHORTCUT_HELP = """Keyboard shortcuts
   Tab          insert completion Ctrl+Space   open completions
   Ctrl+L       clear history     Ctrl+Shift+C copy last result
   F1 or help   this help         Esc          dismiss help
+  Up/Down      scroll help/vars  PageUp/Down  page help/vars
   Alt+W        cycle word size   Alt+S        toggle signed/unsigned
   Alt+D        toggle deg/rad    Alt+N        cycle notation
   Alt+Shift+B  result base       Alt+T        always on top
@@ -119,6 +121,8 @@ class MainWindow(QMainWindow):
         self.store = store  # None = no persistence (tests)
         self.recall_index: int | None = None
         self._inspect_locked = False
+        self._toast_active = False
+        self._pane_hid_inspector = False
         self._help_overview_shown = False
         self._did_initial_show = False
         self.last_result_text = ""
@@ -170,9 +174,13 @@ class MainWindow(QMainWindow):
         self.help_pane = QTextEdit()
         self.help_pane.setObjectName("helpPane")
         self.help_pane.setReadOnly(True)
-        # No wrapping: aligned columns beat wrapped lines for readability;
-        # a horizontal scrollbar appears when the window is narrower.
-        self.help_pane.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        # Wrap to the viewport. The bulk of the document is HTML tables, whose
+        # columns stay aligned while the summary cell wraps — so wrapping costs
+        # nothing there and saves the reader ~400px of horizontal scrolling.
+        # The two <pre> blocks (basics, shortcuts) still can't wrap and keep
+        # their hand-aligned columns, so a narrow window can still scroll
+        # sideways for those — the original trade, now limited to them.
+        self.help_pane.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
 
         self.vars_pane = QListWidget()
         self.vars_pane.setObjectName("varsPane")
@@ -259,7 +267,7 @@ class MainWindow(QMainWindow):
         self.toast_timer = QTimer(self)
         self.toast_timer.setSingleShot(True)
         self.toast_timer.setInterval(1800)
-        self.toast_timer.timeout.connect(lambda: self.toast_label.setText(""))
+        self.toast_timer.timeout.connect(self._clear_toast)
 
         # Default sized so the widest case — a 64-bit word, whose bit grid
         # wraps to four rows — fits without scrolling. Smaller windows are
@@ -311,10 +319,6 @@ class MainWindow(QMainWindow):
 
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
-        self.toast_label = QLabel("")
-        self.toast_label.setProperty("class", "statusItem")
-        bar.addWidget(self.toast_label, 1)
-
         self.status_items: dict[str, QToolButton] = {}
         for key, handler in (
             ("angle", self._toggle_angle),
@@ -461,7 +465,7 @@ class MainWindow(QMainWindow):
         self.history_view.scrollToBottom()
         self.recall_index = None
         self.input.clear()
-        self.preview.setText(" ")
+        self._set_preview(" ", "ok")
         self._panel_follow(outcome.value)
         if outcome.kind == "assign":
             self._refresh_vars_pane()
@@ -473,7 +477,12 @@ class MainWindow(QMainWindow):
         text = self.input.text()
         if not text.strip():
             self.highlighter.set_error_span(None)
-            self._set_preview(" ", error=False)
+            # A command that clears the input (`clear`, `del x`, a csr
+            # definition) toasts and *then* trips the debounced preview, so an
+            # empty line must leave a live toast standing — otherwise the
+            # confirmation would blink out ~100ms after appearing.
+            if not self._toast_active:
+                self._set_preview(" ", "ok")
             if not self._inspect_locked:
                 self._panel_follow(self.session.ans)  # back to the last result
             return
@@ -482,38 +491,38 @@ class MainWindow(QMainWindow):
             outcome = self.session.preview(text)
         except IncompleteError:
             self.highlighter.set_error_span(None)
-            self._set_preview("…", error=False)
+            self._set_preview("…", "ok")
             return  # keep the panel steady while typing continues
         except CalcError as exc:
             self._show_error(exc)
             return
         self.highlighter.set_error_span(None)
         if outcome.kind == "help":
-            self._set_preview("press Enter for help", error=False)
+            self._set_preview("press Enter for help", "ok")
             return
         if outcome.kind == "vars":
-            self._set_preview("press Enter to list variables", error=False)
+            self._set_preview("press Enter to list variables", "ok")
             return
         if outcome.kind == "del":
-            self._set_preview(f"press Enter to delete {outcome.target}", error=False)
+            self._set_preview(f"press Enter to delete {outcome.target}", "ok")
             return
         if outcome.kind == "csr":
             if outcome.target is not None:
-                self._set_preview(f"press Enter to define csr {outcome.target}", error=False)
+                self._set_preview(f"press Enter to define csr {outcome.target}", "ok")
             else:
-                self._set_preview("press Enter to list csrs", error=False)
+                self._set_preview("press Enter to list csrs", "ok")
             return
         if outcome.kind == "clear":
-            self._set_preview("press Enter to clear variables and history", error=False)
+            self._set_preview("press Enter to clear variables and history", "ok")
             return
         if outcome.value is None:
-            self._set_preview(" ", error=False)
+            self._set_preview(" ", "ok")
             return
         result = self.session.format_value(outcome.value)
         if outcome.kind == "assign":
-            self._set_preview(outcome.normalized, error=False)
+            self._set_preview(outcome.normalized, "ok")
         else:
-            self._set_preview(f"{outcome.normalized} = {result}", error=False)
+            self._set_preview(f"{outcome.normalized} = {result}", "ok")
         self._panel_follow(outcome.value)
 
     def _panel_follow(self, value: Value | None) -> None:
@@ -554,9 +563,11 @@ class MainWindow(QMainWindow):
                 self.intview.set_reference(None, None)
         self.channels.set_live(self.intview.scratch if self.intview.active else None)
 
-    def _set_preview(self, text: str, error: bool) -> None:
+    def _set_preview(self, text: str, state: str) -> None:
+        """Write the line under the input. `state` is "ok" | "error" | "toast"."""
+        self._toast_active = state == "toast"  # a real preview supersedes a toast
         self.preview.setText(text)
-        self.preview.setProperty("state", "error" if error else "ok")
+        self.preview.setProperty("state", state)
         style = self.preview.style()
         style.unpolish(self.preview)
         style.polish(self.preview)
@@ -565,7 +576,7 @@ class MainWindow(QMainWindow):
         # The offending span gets a wavy underline in the input itself (a
         # text caret under a differently-sized preview font never lines up).
         self.highlighter.set_error_span((exc.span.start, exc.span.end))
-        self._set_preview(exc.message, error=True)
+        self._set_preview(exc.message, "error")
 
     def _on_history_scroll_changed(self, value: int) -> None:
         self._history_follow_bottom = value >= self.history_view.verticalScrollBar().maximum()
@@ -588,6 +599,8 @@ class MainWindow(QMainWindow):
             assert isinstance(event, QKeyEvent)
             if self.completer.handle_key(event):
                 return True
+            if self._scroll_overlay_pane(event.key()):
+                return True  # help/vars showing: these scroll it, not history
             if event.key() == Qt.Key.Key_Up:
                 self._recall(-1)
                 return True
@@ -825,6 +838,48 @@ class MainWindow(QMainWindow):
             f"letter-spacing: 1px; }}"
         )
 
+    def _show_pane(self, pane: QWidget) -> None:
+        """Switch the top pane, yielding the inspector's space to overlays.
+
+        Help and variables are things you read, and both were being squeezed
+        into whatever the inspector left over — the help overview is a ~2800px
+        document that had a 244px window onto it. Neither is useful while
+        reading, so they stand down until the history view is back. Restores
+        only what this hid, so an inspector the user closed with Alt+I stays
+        closed.
+        """
+        overlay = pane is not self.history_view
+        if overlay and not self._pane_hid_inspector and self.inspector.isVisibleTo(self):
+            self.inspector_scroll.setVisible(False)
+            self._pane_hid_inspector = True
+        elif not overlay and self._pane_hid_inspector:
+            self.inspector_scroll.setVisible(True)
+            self._pane_hid_inspector = False
+        self.pane_stack.setCurrentWidget(pane)
+
+    def _scroll_overlay_pane(self, key: int) -> bool:
+        """Route scroll keys to help/vars, which never take focus themselves.
+
+        The input line keeps focus at all times, so without this the help pane
+        had no keyboard scrolling at all and Up/Down went to history recall —
+        useless while reading a document taller than the screen.
+        """
+        pane = self.pane_stack.currentWidget()
+        if pane is self.history_view:
+            return False
+        actions: dict[int, QAbstractSlider.SliderAction] = {
+            Qt.Key.Key_Up: QAbstractSlider.SliderAction.SliderSingleStepSub,
+            Qt.Key.Key_Down: QAbstractSlider.SliderAction.SliderSingleStepAdd,
+            Qt.Key.Key_PageUp: QAbstractSlider.SliderAction.SliderPageStepSub,
+            Qt.Key.Key_PageDown: QAbstractSlider.SliderAction.SliderPageStepAdd,
+        }
+        action = actions.get(key)
+        if action is None:
+            return False
+        scrollbar = pane.verticalScrollBar()  # type: ignore[attr-defined]
+        scrollbar.triggerAction(action)
+        return True
+
     def _show_help(self, text: str | None = None) -> None:
         self._help_overview_shown = text is None
         if text is None:
@@ -832,16 +887,17 @@ class MainWindow(QMainWindow):
             self.help_pane.setHtml(general_help_html(SHORTCUT_HELP))
         else:
             self.help_pane.setPlainText(text)
-        self.pane_stack.setCurrentWidget(self.help_pane)
+        self.help_pane.verticalScrollBar().setValue(0)  # always open at the top
+        self._show_pane(self.help_pane)
 
     def _hide_help(self) -> None:
-        self.pane_stack.setCurrentWidget(self.history_view)
+        self._show_pane(self.history_view)
 
     # -- variables pane ---------------------------------------------------------
 
     def _show_vars(self) -> None:
         self._refresh_vars_pane()
-        self.pane_stack.setCurrentWidget(self.vars_pane)
+        self._show_pane(self.vars_pane)
 
     def _toggle_vars(self) -> None:
         if self.vars_pane.isVisibleTo(self):
@@ -913,6 +969,7 @@ class MainWindow(QMainWindow):
         # inner widget would leave an empty scroll frame holding the space.
         visible = not self.inspector.isVisibleTo(self)
         self.inspector_scroll.setVisible(visible)
+        self._pane_hid_inspector = False  # explicit choice outranks pane arbitration
         if self.store is not None:
             app_settings().setValue("inspector_visible", visible)
         self._toast("inspector shown" if visible else "inspector hidden")
@@ -952,8 +1009,22 @@ class MainWindow(QMainWindow):
             self.history_view.scrollToBottom()
 
     def _toast(self, message: str) -> None:
-        self.toast_label.setText(message)
+        """Transient confirmation, shown on the preview line under the input.
+
+        It used to live in the status bar's message area, where the mode chips
+        left it 46-58px — every message past about eight characters was cut,
+        including the CSR-definition confirmation (`csr CTRL = EN[31]
+        IRQ[30:28] ADDR[27:8] CMD[7:0]`, which rendered as `csr`). The preview
+        line is full-width and already where the eye is after pressing Enter.
+        """
+        self._set_preview(message, "toast")
         self.toast_timer.start()
+
+    def _clear_toast(self) -> None:
+        if not self._toast_active:
+            return  # something already replaced it; leave that alone
+        self._toast_active = False
+        self._update_preview()  # back to whatever the input line now says
 
     def apply_palette(self, palette: Palette) -> None:
         self.palette_tokens = palette
