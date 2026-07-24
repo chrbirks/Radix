@@ -9,6 +9,14 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Changed
+
+- The live-preview line now shows explicit grouping parentheses for
+  mixed-precedence expressions, so a surprising precedence is visible before
+  you press Enter — e.g. `x10>>2+h10>>2` previews as `16 >> (2 + 16) >> 2 = 0`,
+  making it clear that `+` binds tighter than `>>`. Same-precedence chains
+  (`a + b + c`) and superscript powers (`2³ + 1`) stay paren-free.
+
 ### Fixed
 
 - History entries with a real (non-integer) result now keep reformatting when

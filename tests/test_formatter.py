@@ -92,6 +92,36 @@ def test_preview_rendering() -> None:
     assert session.preview("1/2pi").normalized == "1 / 2 × pi"
 
 
+def test_preview_clarifying_parentheses() -> None:
+    # Mixed-precedence subexpressions are parenthesized to make the grouping
+    # explicit, even where the parens are not strictly required to re-parse.
+    session = Session()
+
+    def norm(text: str) -> str:
+        return session.preview(text).normalized
+
+    # The reported case: >> binds looser than +, so the + groups first.
+    assert norm("x10>>2+h10>>2") == "16 >> (2 + 16) >> 2"
+    assert norm("1+2*3") == "1 + (2 × 3)"
+    assert norm("2*3+4*5") == "(2 × 3) + (4 × 5)"
+    assert norm("7+3*5") == "7 + (3 × 5)"
+    assert norm("2*3+7") == "(2 × 3) + 7"
+    assert norm("1<<2|0xF0") == "(1 << 2) | 240"
+    assert norm("1+2+3*4") == "1 + 2 + (3 × 4)"
+
+    # Same-precedence chains stay clean — no gratuitous parens.
+    assert norm("4+5+6") == "4 + 5 + 6"
+    assert norm("9-2-3") == "9 - 2 - 3"
+    assert norm("8/2/2") == "8 / 2 / 2"
+
+    # A superscript power is self-grouping: treated as an atom, no parens.
+    assert norm("2**3+1") == "2³ + 1"
+    assert norm("7*2**3") == "7 × 2³"
+
+    # Required parens (a looser child) still work as before.
+    assert norm("(1+2)*3") == "(1 + 2) × 3"
+
+
 def test_format_int_base_compact() -> None:
     assert format_int_base(1020, "dec", 64) == "1020"
     assert format_int_base(1020, "hex", 64) == "0x3FC"

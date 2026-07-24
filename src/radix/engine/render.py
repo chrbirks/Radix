@@ -5,6 +5,15 @@ Renders an AST back to text with everything *resolved*: literals normalized
 values, ``*`` (explicit or implicit) shown as ``×``, and ``^`` spelled ``XOR``
 so its meaning is unmistakable. Small integer exponents render as superscripts
 (``(0.002)²``).
+
+Grouping is made *explicit*: on top of the parentheses strictly required to
+re-parse (a child binding looser than its parent), a binary child whose
+precedence differs from its binary parent's — i.e. it binds tighter and so
+groups first — is also parenthesized. That surfaces surprising precedence like
+``16 >> (2 + 16) >> 2`` (``+`` binds tighter than ``>>``) directly in the
+preview. A superscript power (``2³``) is self-grouping, so it is treated as an
+atom and never gains clarifying parens; unary operators are likewise left as-is
+— clarifying parens apply to a binary under a binary only.
 """
 
 from __future__ import annotations
@@ -40,7 +49,11 @@ def render(
 
 
 def _render(
-    node: Node, variables: Mapping[str, Value], ans: Value | None, parent_bp: int
+    node: Node,
+    variables: Mapping[str, Value],
+    ans: Value | None,
+    parent_bp: int,
+    parent_op_bp: int | None = None,
 ) -> str:
     if isinstance(node, Literal):
         return format_number(Value(node.value))
@@ -54,7 +67,7 @@ def _render(
         inner = _render(node.operand, variables, ans, UNARY_BP)
         return _paren(f"{node.op}{inner}", UNARY_BP, parent_bp)
     if isinstance(node, Binary):
-        return _render_binary(node, variables, ans, parent_bp)
+        return _render_binary(node, variables, ans, parent_bp, parent_op_bp)
     if isinstance(node, Call):
         if node.func == "csr" and node.args:
             value_text = _render(node.args[0], variables, ans, 0)
@@ -78,7 +91,11 @@ def _render(
 
 
 def _render_binary(
-    node: Binary, variables: Mapping[str, Value], ans: Value | None, parent_bp: int
+    node: Binary,
+    variables: Mapping[str, Value],
+    ans: Value | None,
+    parent_bp: int,
+    parent_op_bp: int | None,
 ) -> str:
     bp = BINARY_BP[node.op]
     if node.op == "**":
@@ -90,14 +107,16 @@ def _render_binary(
         ):
             inner = _render(node.left, variables, ans, 0)
             base = inner if _is_atom(node.left) else f"({inner})"
+            # A superscript is self-grouping: only *required* parens, never
+            # clarifying ones, so `2**3 + 1` stays `2³ + 1`.
             return _paren(base + _SUPERSCRIPTS[str(exponent.value)], bp, parent_bp)
-        left = _render(node.left, variables, ans, bp)
-        right = _render(exponent, variables, ans, bp)  # right-assoc
-        return _paren(f"{left}**{right}", bp, parent_bp)
-    left = _render(node.left, variables, ans, bp)
-    right = _render(node.right, variables, ans, bp + 1)
+        left = _render(node.left, variables, ans, bp, bp)
+        right = _render(exponent, variables, ans, bp, bp)  # right-assoc
+        return _clarify(f"{left}**{right}", bp, parent_bp, parent_op_bp)
+    left = _render(node.left, variables, ans, bp, bp)
+    right = _render(node.right, variables, ans, bp + 1, bp)
     op = _OP_DISPLAY.get(node.op, node.op)
-    return _paren(f"{left} {op} {right}", bp, parent_bp)
+    return _clarify(f"{left} {op} {right}", bp, parent_bp, parent_op_bp)
 
 
 def _render_spec(node: Node) -> str:
@@ -128,3 +147,20 @@ def _is_atom(node: Node) -> bool:
 
 def _paren(text: str, bp: int, parent_bp: int) -> str:
     return f"({text})" if bp < parent_bp else text
+
+
+def _clarify(text: str, bp: int, parent_bp: int, parent_op_bp: int | None) -> str:
+    """Wrap a binary subexpression when parens are required *or* clarifying.
+
+    Required: the node binds looser than its slot (``bp < parent_bp``).
+    Clarifying: the node sits under a binary parent of a *different* precedence
+    (``parent_op_bp`` set and ``!= bp``) — it binds tighter and groups first, so
+    the parens make that grouping visible even though re-parsing wouldn't need
+    them. ``parent_op_bp`` is ``None`` at the top level and under non-binary
+    parents (function args, slices, unary), which stay paren-free.
+    """
+    if bp < parent_bp:
+        return f"({text})"
+    if parent_op_bp is not None and bp != parent_op_bp:
+        return f"({text})"
+    return text
