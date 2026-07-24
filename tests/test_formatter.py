@@ -86,6 +86,12 @@ def test_preview_rendering() -> None:
     assert session.preview("4.7k*2").normalized == "4700 × 2"
     assert session.preview("2**2").normalized == "2²"
     assert session.preview("(1+1)**2").normalized == "(1 + 1)²"
+    # Multi-digit exponents render as superscripts too, not textual `**`.
+    assert session.preview("2**10").normalized == "2¹⁰"
+    assert session.preview("2**64").normalized == "2⁶⁴"
+    assert session.preview("(1+1)**12").normalized == "(1 + 1)¹²"
+    # A multi-digit superscript is still a self-grouping atom (no clarifying parens).
+    assert session.preview("2**10+1").normalized == "2¹⁰ + 1"
     session.evaluate("x = 0xFF")
     assert session.preview("x << 2").normalized == "255 << 2"
     assert session.preview("y = 3*4").normalized == "y ← 3 × 4"

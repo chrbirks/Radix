@@ -3,8 +3,8 @@
 Renders an AST back to text with everything *resolved*: literals normalized
 (``4.7k`` → ``4700``), variables and constants substituted with their current
 values, ``*`` (explicit or implicit) shown as ``×``, and ``^`` spelled ``XOR``
-so its meaning is unmistakable. Small integer exponents render as superscripts
-(``(0.002)²``).
+so its meaning is unmistakable. Non-negative integer exponents render as
+superscripts (``(0.002)²``, ``2¹⁰``).
 
 Grouping is made *explicit*: on top of the parentheses strictly required to
 re-parse (a child binding looser than its parent), a binary child whose
@@ -103,13 +103,14 @@ def _render_binary(
         if (
             isinstance(exponent, Literal)
             and isinstance(exponent.value, int)
-            and 0 <= exponent.value <= 9
+            and exponent.value >= 0
         ):
             inner = _render(node.left, variables, ans, 0)
             base = inner if _is_atom(node.left) else f"({inner})"
+            superscript = "".join(_SUPERSCRIPTS[d] for d in str(exponent.value))
             # A superscript is self-grouping: only *required* parens, never
             # clarifying ones, so `2**3 + 1` stays `2³ + 1`.
-            return _paren(base + _SUPERSCRIPTS[str(exponent.value)], bp, parent_bp)
+            return _paren(base + superscript, bp, parent_bp)
         left = _render(node.left, variables, ans, bp, bp)
         right = _render(exponent, variables, ans, bp, bp)  # right-assoc
         return _clarify(f"{left}**{right}", bp, parent_bp, parent_op_bp)
