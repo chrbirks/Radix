@@ -3,11 +3,12 @@
 Each line: {"expression": ..., "result": ..., "note": ..., "timestamp": ...,
 "value": ..., "prefix": ...}. Mostly the display text is persisted — recalled
 entries re-evaluate through the current session, so stored text can never
-disagree with the engine. `value` is the exception: for int-valued entries
-the raw integer is also persisted (alongside `prefix`, the assignment badge
-text) so they can still reformat on a base/notation change after a restart,
-same as `channels.py` does for its own int channels. Floats stay
-text-only. Corrupt lines are skipped, never fatal.
+disagree with the engine. `value` is the exception: the full result value is
+also persisted (alongside `prefix`, the assignment badge text) via
+`value_to_json`, so entries can still reformat on a base/notation change after
+a restart — reals round-trip bit-exact, same as session state does. Older
+files stored `value` as a bare int (int-valued entries only); those still load.
+Corrupt lines are skipped, never fatal.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from pathlib import Path
 
 import platformdirs
 
+from radix.engine.values import Value, value_from_json, value_to_json
+
 MAX_LOADED_ENTRIES = 500
 
 
@@ -28,8 +31,19 @@ class StoredEntry:
     result: str
     note: str = ""
     timestamp: float = 0.0
-    value: int | None = None
+    value: Value | None = None
     prefix: str = ""
+
+
+def _value_from_raw(raw_value: object) -> Value | None:
+    """Reconstruct a persisted value, accepting the legacy bare-int shape."""
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, int) and not isinstance(raw_value, bool):
+        return Value(raw_value)  # legacy files stored the raw integer
+    if isinstance(raw_value, dict):
+        return value_from_json(raw_value)
+    raise ValueError(f"unrecognized value shape: {type(raw_value).__name__}")
 
 
 def default_path() -> Path:
@@ -53,7 +67,7 @@ class HistoryStore:
                         result=str(raw["result"]),
                         note=str(raw.get("note", "")),
                         timestamp=float(raw.get("timestamp", 0.0)),
-                        value=int(raw["value"]) if raw.get("value") is not None else None,
+                        value=_value_from_raw(raw.get("value")),
                         prefix=str(raw.get("prefix", "")),
                     )
                 )
@@ -66,7 +80,7 @@ class HistoryStore:
         expression: str,
         result: str,
         note: str = "",
-        value: int | None = None,
+        value: Value | None = None,
         prefix: str = "",
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +89,7 @@ class HistoryStore:
             "result": result,
             "note": note,
             "timestamp": time.time(),
-            "value": value,
+            "value": value_to_json(value) if value is not None else None,
             "prefix": prefix,
         }
         with self.path.open("a", encoding="utf-8") as fh:
@@ -91,7 +105,7 @@ class HistoryStore:
                     "result": entry.result,
                     "note": entry.note,
                     "timestamp": entry.timestamp,
-                    "value": entry.value,
+                    "value": value_to_json(entry.value) if entry.value is not None else None,
                     "prefix": entry.prefix,
                 }
                 fh.write(json.dumps(record) + "\n")

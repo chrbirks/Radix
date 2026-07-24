@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
                         old.expression,
                         old.result,
                         old.note,
-                        value=Value(old.value) if old.value is not None else None,
+                        value=old.value,
                         prefix=old.prefix,
                         timestamp=old.timestamp,
                     )
@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
                 display,
                 outcome.value.note or "",
                 prefix=prefix,
-                value=outcome.value.number if isinstance(outcome.value.number, int) else None,
+                value=outcome.value,
             )
             save_state(self.session)
         self.history_view.scrollToBottom()
@@ -623,9 +623,7 @@ class MainWindow(QMainWindow):
                     e.result,
                     e.note,
                     e.timestamp,
-                    value=e.value.number
-                    if e.value is not None and isinstance(e.value.number, int)
-                    else None,
+                    value=e.value,
                     prefix=e.prefix,
                 )
                 for e in self.model.entries

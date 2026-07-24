@@ -8,6 +8,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
 
+from radix.engine.values import Value  # noqa: E402
 from radix.session import Session  # noqa: E402
 from radix.ui_qt.main_window import MainWindow  # noqa: E402
 from radix.ui_qt.theme import LIGHT  # noqa: E402
@@ -454,7 +455,10 @@ def test_int_history_reformats_across_restart(qtbot, tmp_path) -> None:  # type:
     assert after[1].startswith("y ← ")
 
 
-def test_float_history_does_not_reformat_across_restart(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_float_history_reformats_across_restart(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Regression: a real result kept its (bit-exact) value across a restart,
+    # so cycling notation reformats it in the history panel just like it does
+    # in the live session.
     from PySide6.QtCore import QSettings
 
     from radix.history.store import HistoryStore
@@ -464,15 +468,15 @@ def test_float_history_does_not_reformat_across_restart(qtbot, tmp_path) -> None
 
     win1 = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win1)
-    _submit(qtbot, win1, "sin(1)")
+    _submit(qtbot, win1, "73.5k*0.0272")
     win1.close()
 
     win2 = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win2)
-    assert win2.model.entries[0].value is None
+    assert win2.model.entries[0].value is not None
     before = win2.model.entries[0].result
-    win2._cycle_int_base()
-    assert win2.model.entries[0].result == before
+    win2._cycle_notation()  # auto -> sci
+    assert win2.model.entries[0].result != before
 
 
 def test_int_history_survives_delete_rewrite_and_restart(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -507,7 +511,7 @@ def test_history_scrolls_to_bottom_on_first_show(qtbot, tmp_path) -> None:  # ty
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     store = HistoryStore(tmp_path / "history.jsonl")
     for i in range(40):
-        store.append(f"{i} + 1", str(i + 1), "", value=i + 1)
+        store.append(f"{i} + 1", str(i + 1), "", value=Value(i + 1))
 
     win = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win)
@@ -527,7 +531,7 @@ def test_history_stays_pinned_to_bottom_after_late_resize(qtbot, tmp_path) -> No
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     store = HistoryStore(tmp_path / "history.jsonl")
     for i in range(40):
-        store.append(f"{i} + 1", str(i + 1), "", value=i + 1)
+        store.append(f"{i} + 1", str(i + 1), "", value=Value(i + 1))
 
     win = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win)
@@ -553,7 +557,7 @@ def test_history_resize_does_not_yank_scrolled_up_view(qtbot, tmp_path) -> None:
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     store = HistoryStore(tmp_path / "history.jsonl")
     for i in range(40):
-        store.append(f"{i} + 1", str(i + 1), "", value=i + 1)
+        store.append(f"{i} + 1", str(i + 1), "", value=Value(i + 1))
 
     win = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win)
@@ -580,7 +584,7 @@ def test_history_no_horizontal_scrollbar_after_resize(qtbot, tmp_path) -> None: 
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     store = HistoryStore(tmp_path / "history.jsonl")
     for i in range(40):
-        store.append(f"{i} + 1", str(i + 1), "", value=i + 1)
+        store.append(f"{i} + 1", str(i + 1), "", value=Value(i + 1))
 
     win = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win)

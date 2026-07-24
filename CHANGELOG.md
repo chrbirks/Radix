@@ -9,6 +9,14 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Fixed
+
+- History entries with a real (non-integer) result now keep reformatting when
+  you cycle the result notation (AUTO/SCI/ENG/…) after a restart. Previously
+  only integer results survived a restart with a reformattable value; reals
+  were persisted as text only and froze at whatever notation they were saved
+  in. The full result value (reals round-trip bit-exact) is now persisted.
+
 ## [6] - 2026-07-23
 
 ### Changed
