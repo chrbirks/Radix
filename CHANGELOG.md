@@ -9,6 +9,8 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+## [7] - 2026-08-02
+
 ### Added
 
 - The READOUT zone now says when a result is too wide for the current word
@@ -17,9 +19,6 @@ ambiguity to resolve about major/minor/patch.
   `0xDEADBEEFCAFEBABE` at 8 bits read as `HEX 0xBE` and `2**200` at 32 bits as
   `HEX 0x0000_0000`, with nothing to distinguish that from the whole answer
   and nothing explaining why READOUT disagreed with RESULT.
-
-### Added
-
 - An empty history pane now shows worked examples — SI suffixes, a bit-op,
   `clkdiv`, a CSR definition and `help` — instead of a blank pane above an
   all-zero register panel. It disappears on the first result.
@@ -28,24 +27,6 @@ ambiguity to resolve about major/minor/patch.
   gives), space toggles the bit under it, Esc puts the keys back. The grid
   was previously reachable only with a mouse, in an app whose contract is
   that everything is on the keyboard.
-
-### Fixed
-
-- The result base and float-view status chips advertised Alt+B and Alt+F in
-  their tooltips long after those keys became bash-style word-jump in the
-  input line — following either moved the cursor instead. Both the tooltip
-  and the key binding now come from one table, and the README keyboard
-  reference is corrected (it also gained the missing Alt+P and Alt+Shift+F).
-- Mode chips no longer elide their own labels ("FLOAT OFF" as "FL…FF",
-  "unsigned" as "un…ed" at the minimum window size). Each chip is sized for
-  the widest label it can hold, which also stops the status bar shuffling
-  sideways as you toggle modes.
-- A register field and its bit range can no longer wrap apart in the field
-  table ("CMD" on one line, "[7:0] = 0xF3" on the next).
-- The input placeholder no longer runs off the edge of a minimum-width
-  window (it was cut mid-word at 520px).
-- Pinned channel strips line up with the 12px gutter every other inspector
-  zone uses, instead of running flush to the window edge.
 
 ### Changed
 
@@ -103,6 +84,21 @@ ambiguity to resolve about major/minor/patch.
 
 ### Fixed
 
+- The result base and float-view status chips advertised Alt+B and Alt+F in
+  their tooltips long after those keys became bash-style word-jump in the
+  input line — following either moved the cursor instead. Both the tooltip
+  and the key binding now come from one table, and the README keyboard
+  reference is corrected (it also gained the missing Alt+P and Alt+Shift+F).
+- Mode chips no longer elide their own labels ("FLOAT OFF" as "FL…FF",
+  "unsigned" as "un…ed" at the minimum window size). Each chip is sized for
+  the widest label it can hold, which also stops the status bar shuffling
+  sideways as you toggle modes.
+- A register field and its bit range can no longer wrap apart in the field
+  table ("CMD" on one line, "[7:0] = 0xF3" on the next).
+- The input placeholder no longer runs off the edge of a minimum-width
+  window (it was cut mid-word at 520px).
+- Pinned channel strips line up with the 12px gutter every other inspector
+  zone uses, instead of running flush to the window edge.
 - Results too wide to print in full — anything past about 4300 digits, such as
   `2**20000` — now display in scientific notation (`3.98027684034e+6020`)
   instead of doing nothing at all. Previously the whole line silently failed:
