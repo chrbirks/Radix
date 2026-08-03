@@ -187,17 +187,20 @@ class _Evaluator:
             if a == 0:
                 raise EvalError("0 cannot be raised to a negative power", node.span)
             return Value(mpmath.mpf(1) / mpmath.power(mpmath.mpf(a), -b))
-        if abs(mpmath.mpf(b)) > MAX_MPF_EXPONENT:
+        exponent = mpmath.mpf(b)
+        if abs(exponent) > MAX_MPF_EXPONENT:
             raise EvalError("exponent too large", node.right.span)
         base = mpmath.mpf(a)
         if base < 0:
-            raise EvalError(
-                "negative base with non-integer exponent (complex results not supported)",
-                node.span,
-            )
-        if base == 0 and mpmath.mpf(b) < 0:
+            if not mpmath.isint(exponent):
+                raise EvalError(
+                    "negative base with non-integer exponent (complex results not supported)",
+                    node.span,
+                )
+            return Value(mpmath.power(base, int(exponent)))
+        if base == 0 and exponent < 0:
             raise EvalError("0 cannot be raised to a negative power", node.span)
-        return Value(mpmath.power(base, mpmath.mpf(b)))
+        return Value(mpmath.power(base, exponent))
 
     def _bit_op(self, node: Binary, left: Value, right: Value) -> Value:
         op = node.op

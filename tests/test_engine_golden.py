@@ -142,6 +142,12 @@ PRECEDENCE = [
     ("~5", "4294967290"),  # 0xFFFF_FFFA at the 32-bit default
     ("~~5", "5"),
     ("(-2)**3", "-8"),
+    # negative real base is fine while the exponent is an integer
+    ("(-1.5)**2", "2.25"),
+    ("(-1.5)**3", "-3.375"),
+    ("(-2)**2.0", "4"),  # integral literal lexes as an exact int
+    ("(-2)**(2*1.5)", "-8"),  # integral mpf exponent counts as an integer too
+    ("(-0.5)**-2", "4"),
     ("2pi", "6.28318530718"),
     ("3(1+1)", "6"),
     ("(1+1)(2+2)", "8"),
@@ -221,6 +227,12 @@ def test_working_precision_exceeds_display_precision() -> None:
 def test_domain_errors() -> None:
     for text in ("sqrt(-1)", "asin(2)", "log(-1)", "ln(0)"):
         with pytest.raises(EvalError):
+            run(text)
+
+
+def test_negative_base_needs_integer_exponent() -> None:
+    for text in ("(-2)**0.5", "(-1.5)**2.5"):
+        with pytest.raises(EvalError, match="complex"):
             run(text)
 
 

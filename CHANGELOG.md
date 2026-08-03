@@ -9,6 +9,14 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Fixed
+
+- A negative real base with an integer exponent no longer errors: `(-1.5)**2`
+  is 2.25 instead of "negative base with non-integer exponent". The guard now
+  rejects only what it always claimed to — genuinely non-integer exponents,
+  where the result would be complex. Integral exponents count whether they
+  arrive as ints or as whole-valued reals (`(-2)**(2*1.5)` = −8).
+
 ## [7] - 2026-08-02
 
 ### Added

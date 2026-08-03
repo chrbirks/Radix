@@ -184,8 +184,7 @@ _REL_EPS = mpmath.mpf(10) ** -20
 )
 @settings(max_examples=100)
 def test_sin_cos_pythagorean_identity(x: float) -> None:
-    # sin*sin rather than sin(...)**2: ** rejects negative real bases.
-    expr = f"sin({x!r})*sin({x!r}) + cos({x!r})*cos({x!r})"
+    expr = f"sin({x!r})**2 + cos({x!r})**2"
     assert mpmath.almosteq(mpmath.mpf(run_number(expr)), 1, rel_eps=_REL_EPS)
 
 
