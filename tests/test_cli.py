@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from radix import __version__
@@ -55,3 +58,58 @@ def test_evaluate_csr_definition_prints_confirmation(
 ) -> None:
     assert main(["-e", "csr CTRL = EN[31]"]) == 0
     assert "CTRL" in capsys.readouterr().out
+
+
+def test_eval_error_exit_code_and_stderr_caret(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Errors exit 1 and render on stderr as echo, caret line, error message."""
+    assert main(["-e", "1/0"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == ["1/0", "  ^", "error: division by zero"]
+
+
+def test_lex_error_uses_the_same_stderr_shape(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["-e", "0xZZ"]) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert err[0] == "0xZZ"
+    assert err[1] == "^^^^"  # span covers the whole malformed literal
+    assert err[2].startswith("error:")
+
+
+def test_float_result_prints_bare(capsys: pytest.CaptureFixture[str]) -> None:
+    # No parenthesized hex/dec/bin views for non-integer results.
+    assert main(["-e", "1/3"]) == 0
+    assert capsys.readouterr().out == "0.333333333333\n"
+
+
+def test_si_preference_reaches_the_cli(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["-e", "period(100M)"]) == 0
+    assert capsys.readouterr().out == "10n\n"
+
+
+def test_note_prints_in_brackets(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["-e", "clkdiv(50M, 115200)"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("434")
+    assert "[actual 115.207373272k, error +64 ppm]" in out
+
+
+def test_subprocess_end_to_end() -> None:
+    """One true subprocess round-trip per exit code, display-free."""
+    ok = subprocess.run(
+        [sys.executable, "-m", "radix", "-e", "0xFF << 2"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert ok.returncode == 0
+    assert ok.stdout.startswith("1020")
+
+    bad = subprocess.run(
+        [sys.executable, "-m", "radix", "-e", "1 +"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert bad.returncode == 1
+    assert "error:" in bad.stderr

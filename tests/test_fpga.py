@@ -4,18 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from engine_harness import run, run_number
 from radix.engine.errors import EvalError
 from radix.session import Session
-
-
-def run(text: str, **settings: object) -> str:
-    session = Session()
-    for key, value in settings.items():
-        setattr(session, key, value)
-    outcome = session.evaluate(text)
-    assert outcome.value is not None
-    return session.format_value(outcome.value)
-
 
 # -- bit utilities ----------------------------------------------------------------
 
@@ -36,8 +27,18 @@ CASES = [
     ("byteswap16(0x1234)", "13330"),  # 0x3412
     ("byteswap32(0x12345678)", "2018915346"),  # 0x78563412
     ("byteswap64(1)", "72057594037927936"),  # 1 << 56
+    ("bit(0)", "1"),
+    ("bit(31)", "2147483648"),  # 1 << 31
+    ("popcount(0)", "0"),
+    ("popcount(0xFFFF_FFFF)", "32"),
+    ("revbits(1, 8)", "128"),
+    ("revbits(1)", "2147483648"),  # width defaults to the 32-bit word
+    ("byteswap64(0x0123456789ABCDEF)", str(0xEFCD_AB89_6745_2301)),  # bytes reversed
     ("zext(0x1FF, 8)", "255"),
+    ("zext(0xFFFF, 4)", "15"),
     ("sext(0x80, 8)", "4294967168"),  # sign-extended to 32 bits (default word size)
+    ("sext(0x7F, 8)", "127"),  # sign bit clear: unchanged
+    ("sext(0xF8, 8)", "4294967288"),  # 0xFFFF_FFF8
     ("rol(0x80, 1)", "256"),
     ("ror(1, 1)", "2147483648"),  # 1 << 31 (default word size)
 ]
@@ -53,8 +54,21 @@ def test_rotates_use_word_size() -> None:
     assert run("ror(1, 1)", word_size=8) == "128"
 
 
+def test_rotates_at_64_bits() -> None:
+    assert run("ror(1, 1)", word_size=64) == str(1 << 63)
+    assert run("rol(1, 65)", word_size=64) == "2"  # count is taken mod the word size
+    assert run("rol(1, 64)", word_size=64) == "1"
+
+
 def test_sext_respects_word_size() -> None:
     assert run("sext(0x80, 8)", word_size=16) == "65408"  # 0xFF80
+
+
+def test_sext_zext_bits_capped_by_word_size() -> None:
+    with pytest.raises(EvalError):
+        run("sext(0xFF, 16)", word_size=8)
+    with pytest.raises(EvalError):
+        run("zext(0xFF, 16)", word_size=8)
 
 
 def test_bit_utility_domain_errors() -> None:
@@ -235,6 +249,20 @@ def test_float32_rounds_and_reports_it() -> None:
     assert viz.rounded is True
     assert viz.stored_text == "0.100000001"
     assert viz.exact_text == "0.1"
+
+
+def test_float_pack_bit_patterns() -> None:
+    # 1.5 = 2^0 × 1.5: sign 0, biased exponent 127 (float32) / 1023 (float64),
+    # mantissa field .5 — patterns derivable by hand from the IEEE-754 layout.
+    assert run_number("float32(1.5)") == 0x3FC0_0000
+    assert run_number("float64(1.5)") == 0x3FF8_0000_0000_0000
+    assert run_number("float32(-2)") == 0xC000_0000  # sign 1, 2^1, mantissa 1.0
+
+
+def test_unfloat_golden_values() -> None:
+    assert run("unfloat64(0x3FF8000000000000)") == "1.5"
+    assert run("unfloat64(0x4009000000000000)") == "3.125"  # 2^1 × 1.5625
+    assert run("unfloat32(0xC0000000)") == "-2"
 
 
 def test_unfloat_roundtrip_and_subnormal() -> None:

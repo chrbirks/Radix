@@ -1,7 +1,7 @@
 """Golden-table tests: the executable spec for the engine.
 
 Each case is (input, expected) evaluated on a fresh default session
-(64-bit, unsigned, radians, auto notation) unless a settings dict is given.
+(32-bit, unsigned, radians, auto notation) unless a settings dict is given.
 `expected` compares against the formatted primary text, so these cases pin
 both semantics and display.
 """
@@ -10,18 +10,9 @@ from __future__ import annotations
 
 import pytest
 
+from engine_harness import run
 from radix.engine.errors import CalcError, EvalError, IncompleteError, LexError, ParseError
 from radix.session import Session
-
-
-def run(text: str, **settings: object) -> str:
-    session = Session()
-    for key, value in settings.items():
-        setattr(session, key, value)
-    outcome = session.evaluate(text)
-    assert outcome.value is not None
-    return session.format_value(outcome.value)
-
 
 # -- literals and suffixes ----------------------------------------------------
 
@@ -51,6 +42,14 @@ LITERALS = [
     ("2e", "5.43656365692"),  # e as constant when not an exponent
     ("2e3", "2000"),
     ("1.5e+2", "150"),
+    # SI suffixes previously untested: f, u, µ, m, G
+    ("1f", "1e-15"),
+    ("1.5f", "1.5e-15"),
+    ("3.3u", "3.3e-6"),
+    ("3.3µ", "3.3e-6"),  # micro sign, same key as 'u' in the suffix table
+    ("10u", "0.00001"),  # exponent -5: last value auto shows plain
+    ("1m", "0.001"),
+    ("2.5G", "2500000000"),
 ]
 
 
@@ -131,6 +130,18 @@ PRECEDENCE = [
     ("7 // -2", "-3"),
     ("-7 % 2", "-1"),  # sign of dividend
     ("7 % -2", "1"),
+    # real-operand // and % follow the same truncate-toward-zero pair
+    ("7.5 // 2", "3"),
+    ("-7.5 // 2", "-3"),
+    ("7.5 % 2", "1.5"),
+    ("-7.5 % 2", "-1.5"),
+    # standalone bitwise values (previously only exercised inside one chain)
+    ("5 | 2", "7"),
+    ("6 ^ 3", "5"),
+    ("1 | 2 ^ 4", "7"),  # ^ binds tighter: 1 | (2 ^ 4)
+    ("~5", "4294967290"),  # 0xFFFF_FFFA at the 32-bit default
+    ("~~5", "5"),
+    ("(-2)**3", "-8"),
     ("2pi", "6.28318530718"),
     ("3(1+1)", "6"),
     ("(1+1)(2+2)", "8"),
@@ -198,6 +209,13 @@ def test_logs_and_roots() -> None:
     assert run("ceil(2.1)") == "3"
     assert run("round(2.5)") == "2"  # nint rounds half to even
     assert run("abs(-4)") == "4"
+
+
+def test_working_precision_exceeds_display_precision() -> None:
+    # 1e20 + 1 needs 67 mantissa bits: float64 (53 bits) silently drops the +1,
+    # the 25-dps (~83-bit) working precision must not.
+    assert run("1e20 + 1 - 1e20") == "1"
+    assert run("1/3") == "0.333333333333"  # exactly 12 significant digits
 
 
 def test_domain_errors() -> None:
