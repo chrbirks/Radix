@@ -111,6 +111,35 @@ def test_hdl_value_must_fit_width() -> None:
         run("8'h1FF")
 
 
+# -- mixed-radix expressions ------------------------------------------------------
+
+# One grammar, no modes: every literal form must combine freely in a single
+# expression. Expected values are hand-derived from the decimal readings.
+MIXED_RADIX = [
+    ("0xFF + 1", "256"),
+    ("0x100 - 0b1", "255"),
+    ("0xF0 | 0b1111", "255"),
+    ("0x10 * 0b10", "32"),
+    ("0xA * 0o12 * 0b1010", "1000"),  # 10 · 10 · 10 across three bases
+    ("0b1010 + 0o17 + 0x10 + 10", "51"),  # 10 + 15 + 16 + 10
+    ("0xFF & b1111", "15"),  # 0x-prefix meets prefixed-binary form
+    ("hFF - 0o17", "240"),  # 255 − 15
+    ("8'hFF ^ 0b1010_1010", "85"),  # 0xFF ^ 0xAA = 0x55
+    ("4'd9 + 0x1", "10"),
+    ('x"F0" >> 4', "15"),
+    ("0b1 << 0x4", "16"),  # shift count given in hex
+    ("h10[0x4]", "1"),  # slice index given in hex: bit 4 of 0b1_0000
+    ("4k + 0x10", "4016"),  # SI-suffixed decimal meets hex
+    ("mask(0x8)", "255"),  # function argument in hex
+    ("clog2(0x100)", "8"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), MIXED_RADIX)
+def test_mixed_radix(text: str, expected: str) -> None:
+    assert run(text) == expected
+
+
 # -- precedence and operators ---------------------------------------------------
 
 PRECEDENCE = [
@@ -157,6 +186,36 @@ PRECEDENCE = [
     ("--5", "5"),
     ("~0", "4294967295"),  # default word size is 32 bits
     ("~0", "255", {"word_size": 8}),
+    # parenthesized/bare pairs discriminating each precedence level
+    ("(1 + 2) * 3", "9"),
+    ("2 + 3 * 4 ** 2 - 1", "49"),  # 2 + 3·16 − 1
+    ("2 * 3 ** 2", "18"),  # ** over *
+    ("(2 * 3) ** 2", "36"),
+    ("2 ** (3 ** 2)", "512"),  # same as the bare right-assoc reading
+    ("(2 ** 3) ** 2", "64"),
+    ("-(2 ** 2)", "-4"),  # same as bare -2**2
+    ("(-2) ** 2", "4"),
+    ("8 >> 1 + 1", "2"),  # + tighter than shifts: 8 >> 2
+    ("(8 >> 1) + 1", "5"),
+    ("1 << 2 * 3", "64"),  # * tighter than shifts: 1 << 6
+    ("(1 << 2) * 3", "12"),
+    ("4 & 2 | 1", "1"),  # & tighter than |: (4 & 2) | 1
+    ("4 & (2 | 1)", "0"),
+    ("1 ^ 2 & 2", "3"),  # & tighter than ^: 1 ^ (2 & 2)
+    ("(1 ^ 2) & 2", "2"),
+    ("2 ^ 3 << 2", "14"),  # << tighter than ^: 2 ^ (3 << 2)
+    ("(2 ^ 3) << 2", "4"),
+    ("~1 << 3", "4294967280"),  # ~ tighter than <<: 0xFFFF_FFFE << 3, masked
+    ("~(1 << 3)", "4294967287"),  # 0xFFFF_FFF7
+    ("10 - 4 - 3", "3"),  # left-associative
+    ("10 - (4 - 3)", "9"),
+    ("12 / 2 / 3", "2"),
+    ("12 / (2 / 3)", "18"),
+    ("5 - -3", "8"),
+    ("2 ** -(1 + 1)", "0.25"),
+    ("0xF0[7:4] + 1", "16"),  # slice binds tighter than +
+    ("(0xF0 + 1)[7:4]", "15"),  # 0xF1 bits 7:4
+    ("2(3+1)**2", "32"),  # implicit mult binds like *, looser than **
 ]
 
 

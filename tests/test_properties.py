@@ -152,6 +152,18 @@ def test_popcount_parity_match_reference(v: int, ws: int) -> None:
     assert run_number(f"parity({v})", word_size=ws) == masked.bit_count() & 1
 
 
+@given(st.integers(min_value=0, max_value=2**64 - 1))
+@settings(max_examples=100)
+def test_same_value_reads_identically_in_every_base(n: int) -> None:
+    # One grammar, no modes: dec, hex, bin, and oct spellings of one value are
+    # the same number, and cross-base arithmetic sees them as equal.
+    dec = run_number(str(n))
+    assert run_number(hex(n)) == dec
+    assert run_number(bin(n)) == dec
+    assert run_number(oct(n)) == dec
+    assert run_number(f"{hex(n)} - {bin(n)}") == 0
+
+
 # -- integer arithmetic is exact and never masked ------------------------------
 
 @given(INT128_ST, INT128_ST, WORD_SIZE_ST)
