@@ -9,6 +9,8 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+## [8] - 2026-08-06
+
 ### Changed
 
 - The `clear` command now clears the calculation history only; named variables
