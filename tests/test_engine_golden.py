@@ -342,14 +342,13 @@ def test_undefined_variable_message() -> None:
         run("2pk")
 
 
-def test_clear_wipes_state() -> None:
+def test_clear_keeps_variables_but_drops_ans() -> None:
     session = Session()
     session.evaluate("x = 1")
     session.evaluate("clear")
     with pytest.raises(EvalError):
-        session.evaluate("x")
-    with pytest.raises(EvalError):
-        session.evaluate("ans")
+        session.evaluate("ans")  # the transient last-result is dropped
+    assert session.evaluate("x").primary_text == "1"  # named variables survive `clear`
 
 
 def test_preview_has_no_side_effects() -> None:
@@ -450,13 +449,13 @@ def test_del_removes_csr_and_regresses_on_variables() -> None:
         session.evaluate("del nope")
 
 
-def test_clear_wipes_csrs_too() -> None:
+def test_clear_keeps_csrs_and_variables() -> None:
     session = Session()
     session.evaluate("x = 1")
     session.evaluate("csr CTRL = EN[31]")
     session.evaluate("clear")
-    assert session.variables == {}
-    assert session.csrs == {}
+    assert set(session.variables) == {"x"}
+    assert set(session.csrs) == {"CTRL"}
 
 
 def test_csr_redefinition_overwrites_silently() -> None:

@@ -501,7 +501,7 @@ class MainWindow(QMainWindow):
             if self.store is not None:
                 self.store.clear()
             self.input.clear()
-            self._toast("cleared")
+            self._toast("history cleared (variables & csrs kept)")
             self.intview.show_value(None, self.session.word_size, self.session.signed)
             self.inspector.show_viz_payload(None)
             self._refresh_vars_pane()
@@ -589,7 +589,7 @@ class MainWindow(QMainWindow):
                 self._set_preview("press Enter to list csrs", "ok")
             return
         if outcome.kind == "clear":
-            self._set_preview("press Enter to clear variables and history", "ok")
+            self._set_preview("press Enter to clear history (variables & csrs kept)", "ok")
             return
         if outcome.value is None:
             self._set_preview(" ", "ok")

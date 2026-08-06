@@ -183,7 +183,7 @@ def test_variables_and_csrs_persist_across_restart(qtbot, tmp_path) -> None:  # 
     assert win2.session.ans.number == 0x8C01A0F3
 
 
-def test_clear_wipes_persisted_variables(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_clear_keeps_persisted_variables(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
     from PySide6.QtCore import QSettings
 
     from radix.history.store import HistoryStore
@@ -194,13 +194,12 @@ def test_clear_wipes_persisted_variables(qtbot, tmp_path) -> None:  # type: igno
     win1 = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win1)
     _submit(qtbot, win1, "x = 5")
-    _submit(qtbot, win1, "clear")
+    _submit(qtbot, win1, "clear")  # clears history only — named variables stay
     win1.close()
 
     win2 = MainWindow(Session(), LIGHT, store=store)
     qtbot.addWidget(win2)
-    assert win2.session.variables == {}
-    assert win2.session.csrs == {}
+    assert set(win2.session.variables) == {"x"}
 
 
 def test_live_preview_shows_xor_and_result(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

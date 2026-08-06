@@ -158,9 +158,9 @@ class Session:
             # target carries the topic so the GUI can tell overview from topic.
             return Outcome("help", target=rest or None, help_text=text)
         if word == "clear" and not rest:
+            # `clear` wipes history only; named variables and csrs are kept.
+            # `ans` is the transient last-result, so it clears with the display.
             if commit:
-                self.variables.clear()
-                self.csrs.clear()
                 self.ans = None
             return Outcome("clear")
         if word == "vars" and not rest:

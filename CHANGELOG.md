@@ -11,6 +11,10 @@ ambiguity to resolve about major/minor/patch.
 
 ### Changed
 
+- The `clear` command now clears the calculation history only; named variables
+  and CSRs are kept (the transient `ans` still resets with the display). It
+  previously wiped variables and CSRs too. Use `del NAME` to remove a specific
+  variable or CSR.
 - The Linux binary is now built inside a `manylinux_2_34` container (glibc
   2.34) instead of on the latest CI runner, so it runs on older distributions —
   Ubuntu 22.04+, Debian 12+, RHEL/Alma/Rocky 9+. Previous builds linked against

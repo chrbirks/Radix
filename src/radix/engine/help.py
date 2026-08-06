@@ -58,7 +58,7 @@ Variables  x = 4.7k    then    x * 2      `ans` is the previous result.
 Integers   Results that are integers also show hex/dec/bin and the bit panel.
            Word size and signedness affect bit operators and that display only.
 Commands   help        this overview            help <name>   one operator/function
-           clear       wipe variables & history
+           clear       clear history (variables & csrs kept)
            csr NAME = FIELD[msb:lsb] ...      define a CSR field layout
 """
 
