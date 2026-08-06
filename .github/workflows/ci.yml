@@ -12,10 +12,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
@@ -56,7 +56,7 @@ jobs:
       # Pin to a dated tag/digest once green for reproducible bundled system .so's.
       image: quay.io/pypa/manylinux_2_34_x86_64:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: System Qt/runtime libraries (AlmaLinux 9)
         # Runs as root in-container (no sudo). RHEL equivalents of the Debian
@@ -74,7 +74,7 @@ jobs:
             fontconfig freetype dbus-libs nss nspr expat zlib
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         # No python-version here; uv manages the interpreter in the next step so
         # we don't depend on the container's /opt/python cpython builds.
 
@@ -108,7 +108,7 @@ jobs:
         run: tar -C dist -czf radix-linux-x86_64.tar.gz radix
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: radix-Linux
           path: radix-linux-x86_64.tar.gz
@@ -117,10 +117,10 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
 
@@ -143,7 +143,7 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: radix-Windows
           path: radix-windows-x86_64.zip
