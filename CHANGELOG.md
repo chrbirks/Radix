@@ -11,11 +11,13 @@ ambiguity to resolve about major/minor/patch.
 
 ### Changed
 
-- The Linux binary is now built inside a `manylinux_2_28` container (glibc
-  2.28) instead of on the latest CI runner, so it runs on older distributions —
-  Ubuntu 20.04+, Debian 10+, RHEL/Alma/Rocky 8+. Previous builds linked against
+- The Linux binary is now built inside a `manylinux_2_34` container (glibc
+  2.34) instead of on the latest CI runner, so it runs on older distributions —
+  Ubuntu 22.04+, Debian 12+, RHEL/Alma/Rocky 9+. Previous builds linked against
   the runner's newer glibc and failed to launch on, e.g., Ubuntu 22.04 with
-  `libpython3.12.so: version 'GLIBC_2.38' not found`.
+  `libpython3.12.so: version 'GLIBC_2.38' not found`. (glibc 2.34 is the floor
+  PySide6 6.11's own Qt wheels require, so it's as low as we can go without
+  downgrading PySide6.)
 
 ### Fixed
 

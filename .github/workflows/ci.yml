@@ -39,24 +39,26 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
-  # The Linux binary is built inside a manylinux_2_28 container (AlmaLinux 8,
-  # glibc 2.28) rather than on ubuntu-latest. PyInstaller bundles libpython but
+  # The Linux binary is built inside a manylinux_2_34 container (AlmaLinux 9,
+  # glibc 2.34) rather than on ubuntu-latest. PyInstaller bundles libpython but
   # NOT glibc, and glibc is forward-compatible only — a binary built against
   # glibc 2.38 (ubuntu-latest) fails on older distros with
-  # "version 'GLIBC_2.38' not found". glibc 2.28 is also PySide6 6.8's own wheel
-  # floor, so it's the broadest target that buys anything. `container:` is
-  # job-level and can't be conditioned per matrix leg, so Linux and Windows are
-  # split into separate single-platform jobs.
+  # "version 'GLIBC_2.38' not found". glibc 2.34 is PySide6 6.11's own wheel
+  # floor (it ships only manylinux_2_34+ wheels), so it's the lowest glibc that
+  # still has installable Qt wheels — the broadest target that buys anything
+  # without downgrading PySide6. Covers Ubuntu 22.04+, Debian 12+, RHEL/Alma 9+.
+  # `container:` is job-level and can't be conditioned per matrix leg, so Linux
+  # and Windows are split into separate single-platform jobs.
   build-linux:
     needs: test
     runs-on: ubuntu-latest
     container:
       # Pin to a dated tag/digest once green for reproducible bundled system .so's.
-      image: quay.io/pypa/manylinux_2_28_x86_64:latest
+      image: quay.io/pypa/manylinux_2_34_x86_64:latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: System Qt/runtime libraries (AlmaLinux 8)
+      - name: System Qt/runtime libraries (AlmaLinux 9)
         # Runs as root in-container (no sudo). RHEL equivalents of the Debian
         # libegl1/libxkbcommon0/libxcb-cursor0 plus the headless-PySide6
         # transitive set so PyInstaller's dependency scan copies every Qt .so.
@@ -96,7 +98,7 @@ jobs:
           echo "$out" | grep -q '1020'
 
       - name: Assert glibc floor of bundled libpython
-        # Should print at most GLIBC_2.28; anything higher means the build leaked
+        # Should print at most GLIBC_2.34; anything higher means the build leaked
         # a newer symbol and the container isn't being used correctly.
         run: |
           objdump -T dist/radix/_internal/libpython3.12.so* \
