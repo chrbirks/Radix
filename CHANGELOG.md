@@ -9,6 +9,14 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Changed
+
+- The Linux binary is now built inside a `manylinux_2_28` container (glibc
+  2.28) instead of on the latest CI runner, so it runs on older distributions —
+  Ubuntu 20.04+, Debian 10+, RHEL/Alma/Rocky 8+. Previous builds linked against
+  the runner's newer glibc and failed to launch on, e.g., Ubuntu 22.04 with
+  `libpython3.12.so: version 'GLIBC_2.38' not found`.
+
 ### Fixed
 
 - A negative real base with an integer exponent no longer errors: `(-1.5)**2`

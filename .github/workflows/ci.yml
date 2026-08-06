@@ -39,13 +39,81 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
-  build:
+  # The Linux binary is built inside a manylinux_2_28 container (AlmaLinux 8,
+  # glibc 2.28) rather than on ubuntu-latest. PyInstaller bundles libpython but
+  # NOT glibc, and glibc is forward-compatible only — a binary built against
+  # glibc 2.38 (ubuntu-latest) fails on older distros with
+  # "version 'GLIBC_2.38' not found". glibc 2.28 is also PySide6 6.8's own wheel
+  # floor, so it's the broadest target that buys anything. `container:` is
+  # job-level and can't be conditioned per matrix leg, so Linux and Windows are
+  # split into separate single-platform jobs.
+  build-linux:
     needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    container:
+      # Pin to a dated tag/digest once green for reproducible bundled system .so's.
+      image: quay.io/pypa/manylinux_2_28_x86_64:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System Qt/runtime libraries (AlmaLinux 8)
+        # Runs as root in-container (no sudo). RHEL equivalents of the Debian
+        # libegl1/libxkbcommon0/libxcb-cursor0 plus the headless-PySide6
+        # transitive set so PyInstaller's dependency scan copies every Qt .so.
+        run: |
+          dnf -y install \
+            git \
+            mesa-libEGL mesa-libGL \
+            libxkbcommon libxkbcommon-x11 \
+            xcb-util-cursor xcb-util-keysyms xcb-util-image \
+            xcb-util-renderutil xcb-util-wm \
+            libX11 libX11-xcb libXext libXrender libXi libXrandr \
+            libXfixes libXcursor libXtst libxcb libXau \
+            fontconfig freetype dbus-libs nss nspr expat zlib
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        # No python-version here; uv manages the interpreter in the next step so
+        # we don't depend on the container's /opt/python cpython builds.
+
+      - name: Provision Python 3.12 (uv-managed)
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev --python 3.12
+
+      - name: Freeze with PyInstaller (onedir)
+        run: uv run pyinstaller packaging/radix.spec --distpath dist --workpath build --noconfirm
+        # NOTE: keep PySide6 and PyInstaller pinned together (uv.lock); Qt point
+        # releases have broken PyInstaller hooks before.
+
+      - name: Smoke-test frozen binary
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          out="$(./dist/radix/radix -e '0xFF << 2')"
+          echo "$out"
+          echo "$out" | grep -q '1020'
+
+      - name: Assert glibc floor of bundled libpython
+        # Should print at most GLIBC_2.28; anything higher means the build leaked
+        # a newer symbol and the container isn't being used correctly.
+        run: |
+          objdump -T dist/radix/_internal/libpython3.12.so* \
+            | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -n1
+
+      - name: Package tarball
+        run: tar -C dist -czf radix-linux-x86_64.tar.gz radix
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: radix-Linux
+          path: radix-linux-x86_64.tar.gz
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -57,44 +125,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Qt runtime libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0
-
       - name: Freeze with PyInstaller (onedir)
         run: uv run pyinstaller packaging/radix.spec --distpath dist --workpath build --noconfirm
         # NOTE: keep PySide6 and PyInstaller pinned together (uv.lock); Qt point
         # releases have broken PyInstaller hooks before.
 
-      - name: Smoke-test frozen binary (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          out="$(QT_QPA_PLATFORM=offscreen ./dist/radix/radix -e '0xFF << 2')"
-          echo "$out"
-          echo "$out" | grep -q '1020'
-
-      - name: Smoke-test frozen binary (Windows)
-        if: runner.os == 'Windows'
+      - name: Smoke-test frozen binary
         # The exe is windowed (console=false), so stdout is discarded; the
         # smoke test asserts the exit code.
         run: ./dist/radix/radix.exe -e '0xFF << 2'
         shell: bash
 
-      - name: Package tarball (Linux)
-        if: runner.os == 'Linux'
-        run: tar -C dist -czf radix-linux-x86_64.tar.gz radix
-
-      - name: Package zip (Windows)
-        if: runner.os == 'Windows'
+      - name: Package zip
         run: Compress-Archive -Path dist/radix -DestinationPath radix-windows-x86_64.zip
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: radix-${{ runner.os }}
-          path: |
-            radix-*.tar.gz
-            radix-*.zip
+          name: radix-Windows
+          path: radix-windows-x86_64.zip
