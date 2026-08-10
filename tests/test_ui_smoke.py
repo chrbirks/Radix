@@ -1689,6 +1689,30 @@ def test_the_zone_below_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-
     )
 
 
+@pytest.mark.parametrize("word_size", [8, 16, 32, 64])
+def test_the_row_below_the_grid_collapses_when_it_has_nothing_to_say(  # type: ignore[no-untyped-def]
+    qtbot, styled_window: MainWindow, word_size: int
+) -> None:
+    """Both of that row's occupants are conditional, so idle it is pure margin.
+
+    An empty-but-visible label used to reserve a full text line there at every
+    word size, pushing PINNED down for no reason.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    _settle(qtbot, styled_window, (900, 700), word_size)
+    intview = styled_window.intview
+    actions = intview.layout().itemAt(intview.layout().count() - 1).layout()
+    assert not intview.slice_label.isVisibleTo(intview)
+    assert not intview.error_meter.isVisibleTo(intview)
+    assert actions.geometry().height() == actions.contentsMargins().bottom()
+    # ...and it comes back for the one thing it is there to show.
+    intview.grid_widget.set_selection((3, 0))
+    QApplication.processEvents()
+    assert intview.slice_label.isVisibleTo(intview)
+    assert actions.geometry().height() > actions.contentsMargins().bottom()
+
+
 @pytest.mark.parametrize("size", [(520, 600), (640, 880)])
 @pytest.mark.parametrize("word_size", [32, 64])
 def test_bit_grid_shows_every_row_it_reports(  # type: ignore[no-untyped-def]

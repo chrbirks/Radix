@@ -529,6 +529,9 @@ class IntegerView(QWidget):
         self.field_table.linkActivated.connect(self._on_field_link)
         self.field_table.setVisible(False)
 
+        # Both occupants appear only when they have something to report, and
+        # both hide themselves when they don't, so the row collapses to its
+        # bottom margin and the grid sits a normal zone gap above PINNED.
         actions = QHBoxLayout()
         actions.setContentsMargins(12, 0, 12, 8)
         self.error_meter = ErrorMeter(palette)
@@ -537,6 +540,7 @@ class IntegerView(QWidget):
         self.slice_label = QLabel("")
         self.slice_label.setProperty("class", "sliceNote")
         self.slice_label.setToolTip("drag across bit cells to read a field; Esc clears")
+        self.slice_label.hide()
         actions.addWidget(self.slice_label)
 
         layout = QVBoxLayout(self)
@@ -919,10 +923,12 @@ class IntegerView(QWidget):
         sliced = self._selected_slice()
         if sliced is None or not self.active:
             self.slice_label.setText("")
+            self.slice_label.hide()
             return
         hi, lo, value, width = sliced
         hex_text = format_int_base(value, "hex", width)
         self.slice_label.setText(f"[{hi}:{lo}] = {hex_text} = {value} ({width} bits)")
+        self.slice_label.show()
 
     def set_palette(self, palette: Palette) -> None:
         self.palette_tokens = palette

@@ -40,6 +40,10 @@ ambiguity to resolve about major/minor/patch.
 
 ### Fixed
 
+- The gap between the bit grid and the PINNED frame, which reserved a full text
+  line (35px at every word size) for a drag-selection readout that is only shown
+  while a selection exists. That row now collapses to its margin when it has
+  nothing to report, so REGISTER ends where it looks like it ends.
 - `unfloat32()` at a 64-bit word size showed a *double* breakdown of the decoded
   value next to a card describing the single-precision pattern it came from. The
   panel now follows the payload's own width.
