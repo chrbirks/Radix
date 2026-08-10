@@ -19,12 +19,11 @@ ambiguity to resolve about major/minor/patch.
   lanes carry the decoded value: `HEX / DEC / Q8.4 / ERR` for fixed-point,
   `HEX / VAL / SGN / EXP / MAN` for packed floats. Previously the same bits were
   drawn twice at two different scales, and the REGISTER grid below the card
-  showed the raw word at the session word size, contradicting it. The
-  quantization-error meter (a full bar is ½ LSB) moved to the panel's action
-  row, and the caption names the format (`REGISTER · Q8.4`). Per-bit hover
-  tooltips came along, now including each bit's weight (`weight 2^-15`).
-  Like the FLOAT ON view, these layouts are read-only; TRACE is now only ever
-  the clock and memory cards.
+  showed the raw word at the session word size, contradicting it. The caption
+  names the format (`REGISTER · Q8.4`), and per-bit hover tooltips came along,
+  now including each bit's weight (`weight 2^-15`). Like the FLOAT ON view,
+  these layouts are read-only; TRACE is now only ever the clock and memory
+  cards.
 
 ### Removed
 

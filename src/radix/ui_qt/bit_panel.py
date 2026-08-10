@@ -40,8 +40,6 @@ BYTE_WIDTH = 8 * (CELL + GAP) + 2 * NIBBLE_GAP  # one byte group incl. nibble ga
 LANE_ROWS = 5  # max simultaneous lanes (HEX/DEC/BIN, or HEX/VAL/SGN/EXP/MAN)
 TOP_MARGIN = 8  # above the first row, so tall hex-digit labels don't clip the widget edge
 BOTTOM_MARGIN = 4
-METER_W = 120  # quantization-error meter in the actions row
-METER_H = 8
 
 
 @dataclass(frozen=True)
@@ -418,46 +416,6 @@ class BitGrid(QWidget):
         self._dragging = False
 
 
-class ErrorMeter(QWidget):
-    """Quantization error as a fraction of half an LSB (round-to-nearest worst case).
-
-    Only fixed-point results have one, so the widget hides itself otherwise.
-    """
-
-    def __init__(self, palette: Palette) -> None:
-        super().__init__()
-        self.palette_tokens = palette
-        self._fraction = 0.0
-        self.setFixedSize(METER_W, METER_H + 6)
-        self.hide()
-
-    def set_error(self, error_lsb: float | None, text: str | None = None) -> None:
-        if error_lsb is None:
-            self.hide()
-            return
-        self._fraction = min(1.0, error_lsb / 0.5)
-        self.setToolTip(f"quantization error {text} — a full bar is 1/2 LSB")
-        self.show()
-        self.update()
-
-    def set_palette(self, palette: Palette) -> None:
-        self.palette_tokens = palette
-        self.update()
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        p = self.palette_tokens
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        y = (self.height() - METER_H) / 2
-        painter.setBrush(QColor(p.bit_off))
-        painter.drawRoundedRect(QRectF(0, y, METER_W, METER_H), 3, 3)
-        if self._fraction > 0:
-            painter.setBrush(QColor(p.warn if self._fraction > 0.5 else p.ok))
-            painter.drawRoundedRect(QRectF(0, y, METER_W * self._fraction, METER_H), 3, 3)
-        painter.end()
-
-
 class IntegerView(QWidget):
     """The whole bottom panel: base rows + bit grid + actions."""
 
@@ -529,13 +487,11 @@ class IntegerView(QWidget):
         self.field_table.linkActivated.connect(self._on_field_link)
         self.field_table.setVisible(False)
 
-        # Both occupants appear only when they have something to report, and
-        # both hide themselves when they don't, so the row collapses to its
-        # bottom margin and the grid sits a normal zone gap above PINNED.
+        # The slice readout is this row's only occupant and appears only while
+        # a drag selection exists, so the row otherwise collapses to its bottom
+        # margin and the grid sits a normal zone gap above PINNED.
         actions = QHBoxLayout()
         actions.setContentsMargins(12, 0, 12, 8)
-        self.error_meter = ErrorMeter(palette)
-        actions.addWidget(self.error_meter)
         actions.addStretch(1)
         self.slice_label = QLabel("")
         self.slice_label.setProperty("class", "sliceNote")
@@ -727,7 +683,6 @@ class IntegerView(QWidget):
             self._refresh_float(self.float_mode)
             return
         self.register_caption.set_text("REGISTER")
-        self.error_meter.set_error(None)
         views = integer_views(self.scratch, self.word_size)
         self._set_trunc_note(views.truncated and self.active, views.value_bits)
         dec_text = views.dec_unsigned
@@ -854,7 +809,6 @@ class IntegerView(QWidget):
             ],
             dimmed=False,
         )
-        self.error_meter.set_error(viz.error_lsb, viz.error_lsb_text)
         self.grid_widget.set_state(
             viz.raw,
             total,
@@ -882,7 +836,6 @@ class IntegerView(QWidget):
             f"REGISTER · float{views.width}" if packed is not None else "REGISTER"
         )
         self._set_trunc_note(False, 0)  # the pattern is the whole value here
-        self.error_meter.set_error(None)
         self._copy_texts = {
             "HEX": views.hex,
             "SGN": views.sign_text,
@@ -935,7 +888,6 @@ class IntegerView(QWidget):
         self.readout_caption.set_palette(palette)
         self.register_caption.set_palette(palette)
         self.grid_widget.set_palette(palette)
-        self.error_meter.set_palette(palette)
         self._refresh()  # re-render the BIN highlight color
 
     # -- actions --------------------------------------------------------------

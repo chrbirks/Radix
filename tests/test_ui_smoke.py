@@ -239,11 +239,9 @@ def test_fix_renders_in_the_register_frame(qtbot, window: MainWindow) -> None:  
     assert intview.rows["HEX"][1].text() == "0x5A82"
     assert intview.rows["Q1.15"][1].text().startswith("0.7071 → 0.70709")
     assert intview.register_caption.text() == "REGISTER · Q1.15"
-    assert intview.error_meter.isVisibleTo(intview)
     _submit(qtbot, window, "1 + 1")
     assert intview.fixed_view is None and intview.active
     assert intview.register_caption.text() == "REGISTER"
-    assert not intview.error_meter.isVisibleTo(intview)
     # The live preview drives it too, and unfix() returns a real carrying the
     # same payload -- it has to reach REGISTER by the same route.
     window.input.setText("unfix(0x4000, 1, 15)")
@@ -410,7 +408,6 @@ def test_float32_renders_in_the_register_frame(qtbot, window: MainWindow) -> Non
     assert intview.register_caption.text() == "REGISTER · float32"
     grid = intview.grid_widget
     assert grid.word_size == 32 and grid.bands is not None and grid.bands.low_width == 23
-    assert not intview.error_meter.isVisibleTo(intview)  # no quantization error here
     _submit(qtbot, window, "float32(1.1)")
     assert "rounded from 1.1" in intview.rows["VAL"][1].text()
     # FLOAT ON/OFF is a display preference; a float32() result is not.
@@ -1674,8 +1671,8 @@ def test_the_zone_below_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-
     """A squeezed inspector used to paint the row under the grid across it.
 
     The PINNED caption is the first always-visible thing below the grid, so it
-    is what a squeeze would collide with now that the actions row holds only
-    conditional widgets.
+    is what a squeeze would collide with now that the actions row holds only a
+    conditional widget.
     """
     _settle(qtbot, styled_window, size, word_size)
     inspector = styled_window.inspector
@@ -1693,7 +1690,7 @@ def test_the_zone_below_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-
 def test_the_row_below_the_grid_collapses_when_it_has_nothing_to_say(  # type: ignore[no-untyped-def]
     qtbot, styled_window: MainWindow, word_size: int
 ) -> None:
-    """Both of that row's occupants are conditional, so idle it is pure margin.
+    """That row's only occupant is conditional, so idle it is pure margin.
 
     An empty-but-visible label used to reserve a full text line there at every
     word size, pushing PINNED down for no reason.
@@ -1704,7 +1701,6 @@ def test_the_row_below_the_grid_collapses_when_it_has_nothing_to_say(  # type: i
     intview = styled_window.intview
     actions = intview.layout().itemAt(intview.layout().count() - 1).layout()
     assert not intview.slice_label.isVisibleTo(intview)
-    assert not intview.error_meter.isVisibleTo(intview)
     assert actions.geometry().height() == actions.contentsMargins().bottom()
     # ...and it comes back for the one thing it is there to show.
     intview.grid_widget.set_selection((3, 0))
