@@ -90,8 +90,8 @@ class InspectorScroll(QScrollArea):
     inspector to a permanent scrolling stub; deferring to the child keeps the
     panel at full size whenever the window has room. What the scroll area buys
     is the floor: below `INSPECTOR_MIN_H` the content scrolls instead of being
-    squeezed past its minimum, which is what used to paint `pin result` on top
-    of the bit grid at 64-bit word sizes.
+    squeezed past its minimum, which is what used to paint the zone below the
+    bit grid on top of it at 64-bit word sizes.
     """
 
     def sizeHint(self) -> QSize:
@@ -299,7 +299,6 @@ class MainWindow(QMainWindow):
         self.channels = self.inspector.channels
         self.intview.value_to_input.connect(self._set_input)
         self.intview.copied.connect(self._toast)
-        self.intview.pin_requested.connect(lambda n: self._pin_value(Value(n), None))
         self.channels.to_input.connect(self._set_input)
         self.channels.copied.connect(self._toast)
         self.channels.ref_changed.connect(self._on_ref_changed)
@@ -649,17 +648,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_ref_changed(self) -> None:
-        """Sync the armed channel (if any) into the integer panel's REF diff."""
-        ref_index = self.channels.ref_index
-        if ref_index is None:
-            self.intview.set_reference(None, None)
-        else:
-            channel = self.channels.channels[ref_index]
-            value = channel.value
-            if value is not None and isinstance(value.number, int):
-                self.intview.set_reference(channel.label, value.number)
-            else:
-                self.intview.set_reference(None, None)
+        """Re-feed the live value so the armed channel can redraw its XOR diff."""
         self.channels.set_live(self.intview.scratch if self.intview.active else None)
 
     def _set_preview(self, text: str, state: str) -> None:

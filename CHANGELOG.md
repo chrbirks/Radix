@@ -28,6 +28,11 @@ ambiguity to resolve about major/minor/patch.
 
 ### Removed
 
+- The `pin result` button and the `Δ +n -m` note beside it, under the bit grid.
+  The PINNED frame directly below already says `Alt+P pins the last result`, and
+  an armed REF channel shows its own `XOR` readout, so the row was restating
+  what its neighbours already said. Bit-flip highlighting in the grid itself is
+  unchanged.
 - The ASC lane in the READOUT frame, which rendered the result's bytes as ASCII
   characters. It was noise on numeric results, and because it only appeared when
   some byte happened to be printable, the READOUT frame changed height from one

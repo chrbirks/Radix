@@ -30,7 +30,7 @@ def styled_window(qtbot, qapp):  # type: ignore[no-untyped-def]
     enough that the panels always fit. Layout defects only show up at the
     stylesheet's actual type sizes, so anything asserting geometry has to pay
     for the real thing — that gap is why a full green suite still shipped a
-    bit grid with `pin result` painted across it.
+    bit grid with the row below it painted across it.
     """
     from PySide6.QtWidgets import QApplication
 
@@ -823,14 +823,12 @@ def test_changed_bits_diff_against_previous_value(qtbot, window: MainWindow) -> 
     window.input.setText("ans << 1")
     window._update_preview()
     assert window.intview.changed == 0xFF ^ 0x1FE  # bits 0 and 8 flipped
-    assert window.intview.delta_label.text() == "Δ +1 -1"
 
 
 def test_bit_toggle_marks_single_changed_bit(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "8")
     window.intview.toggle_bit(0)
     assert window.intview.changed == 1
-    assert window.intview.delta_label.text() == "Δ +1 -0"
 
 
 def test_bin_lane_highlights_set_bits_but_copies_plain(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1291,17 +1289,6 @@ def test_channel_to_input_inserts_masked_hex(qtbot, window: MainWindow) -> None:
     assert window.input.text() == "0xFF"
 
 
-def test_ref_arm_shows_delta_vs_channel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    _submit(qtbot, window, "0xFF")
-    window._pin_last_result()  # int channel "C1"
-    window.channels._toggle_ref(0)
-    _submit(qtbot, window, "0xF0")
-    diff = 0xF0 ^ 0xFF
-    gained = (0xF0 & diff).bit_count()
-    lost = (~0xF0 & diff).bit_count()
-    assert window.intview.delta_label.text() == f"Δ vs C1 +{gained} -{lost}"
-
-
 def test_channel_strip_click_arms_and_disarms_ref(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "0xFF")
     window._pin_last_result()  # int channel "C1"
@@ -1336,17 +1323,13 @@ def test_ref_channel_shows_xor_readout(qtbot, window: MainWindow) -> None:  # ty
     assert strip.diff_strip.isVisibleTo(window)
 
 
-def test_ref_disarm_restores_plain_delta(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+def test_ref_disarm_hides_the_xor_readout(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "0xFF")
     window._pin_last_result()
     window.channels._toggle_ref(0)
     _submit(qtbot, window, "0xF0")
     window.channels._toggle_ref(0)  # disarm
     _submit(qtbot, window, "0x0F")
-    changed = window.intview.changed & ((1 << window.session.word_size) - 1)
-    gained = (window.intview._masked_scratch & changed).bit_count()
-    lost = (~window.intview._masked_scratch & changed).bit_count()
-    assert window.intview.delta_label.text() == f"Δ +{gained} -{lost}"
     strip = window.channels._strips[0]
     assert not strip.xor_label.isVisibleTo(window)
     assert not strip.diff_strip.isVisibleTo(window)
@@ -1360,7 +1343,6 @@ def test_ref_extras_hidden_for_float_live_value(qtbot, window: MainWindow) -> No
     strip = window.channels._strips[0]
     assert not strip.xor_label.isVisibleTo(window)
     assert not strip.diff_strip.isVisibleTo(window)
-    assert window.intview.delta_label.text() == ""
 
 
 def test_ref_survives_persistence(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -1380,7 +1362,8 @@ def test_ref_survives_persistence(qtbot, tmp_path) -> None:  # type: ignore[no-u
     win2 = MainWindow(Session(), LIGHT, store=HistoryStore(tmp_path / "history.jsonl"))
     qtbot.addWidget(win2)
     assert win2.channels.ref_index == 0
-    assert win2.intview._ref == ("C1", 0xFF)
+    strip = win2.channels._strips[0]
+    assert strip.is_ref and strip.ref_tag.isVisibleTo(strip)
 
 
 def test_unpin_frees_slot(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1683,27 +1666,26 @@ def _settle(qtbot, window: MainWindow, size: tuple[int, int], word_size: int) ->
     raise AssertionError("inspector layout never settled")
 
 
-def _pin_button(window: MainWindow):  # type: ignore[no-untyped-def]
-    from PySide6.QtWidgets import QPushButton
-
-    return next(
-        b for b in window.intview.findChildren(QPushButton) if b.text() == "pin result"
-    )
-
-
 @pytest.mark.parametrize("size", [(520, 600), (600, 800), (640, 880), (900, 700)])
 @pytest.mark.parametrize("word_size", [8, 32, 64])
-def test_actions_row_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-def]
+def test_the_zone_below_never_overlaps_the_bit_grid(  # type: ignore[no-untyped-def]
     qtbot, styled_window: MainWindow, size: tuple[int, int], word_size: int
 ) -> None:
+    """A squeezed inspector used to paint the row under the grid across it.
+
+    The PINNED caption is the first always-visible thing below the grid, so it
+    is what a squeeze would collide with now that the actions row holds only
+    conditional widgets.
+    """
     _settle(qtbot, styled_window, size, word_size)
+    inspector = styled_window.inspector
     grid = styled_window.intview.grid_widget
-    button = _pin_button(styled_window)
-    grid_bottom = grid.mapTo(styled_window.intview, grid.rect().bottomLeft()).y()
-    button_top = button.mapTo(styled_window.intview, button.rect().topLeft()).y()
-    assert button_top >= grid_bottom, (
-        f"{size} at {word_size}-bit: 'pin result' overlaps the bit grid by "
-        f"{grid_bottom - button_top}px"
+    caption = inspector.channels_caption
+    grid_bottom = grid.mapTo(inspector, grid.rect().bottomLeft()).y()
+    caption_top = caption.mapTo(inspector, caption.rect().topLeft()).y()
+    assert caption_top >= grid_bottom, (
+        f"{size} at {word_size}-bit: the PINNED zone overlaps the bit grid by "
+        f"{grid_bottom - caption_top}px"
     )
 
 
@@ -1843,15 +1825,6 @@ def test_scroll_keys_still_recall_history_on_the_history_pane(qtbot, window: Mai
 # -- controls that cannot act say so ---------------------------------------------
 
 
-def test_panel_buttons_disabled_when_there_is_nothing_to_act_on(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    intview = window.intview
-    assert not intview.pin_btn.isEnabled()  # empty panel
-    _submit(qtbot, window, "0xFF")
-    assert intview.pin_btn.isEnabled()
-    _submit(qtbot, window, "2.5")  # float greys the panel
-    assert not intview.pin_btn.isEnabled()
-
-
 def test_copy_buttons_follow_the_lanes_they_copy(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     """Copy works in float view (there are lanes) but not on an empty panel."""
     first_copy = window.intview._row_widgets[0][2]
@@ -1860,7 +1833,6 @@ def test_copy_buttons_follow_the_lanes_they_copy(qtbot, window: MainWindow) -> N
     _submit(qtbot, window, "2.5")
     assert window.intview.float_mode is not None
     assert first_copy.isEnabled()
-    assert not window.intview.pin_btn.isEnabled()  # no integer scratch to pin
 
 
 # -- long results stay reachable ---------------------------------------------------

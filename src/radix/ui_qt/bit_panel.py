@@ -463,7 +463,6 @@ class IntegerView(QWidget):
 
     value_to_input = Signal(str)
     copied = Signal(str)  # human description for the status-bar toast
-    pin_requested = Signal(int)  # masked scratch value, to pin as a channel
 
     def __init__(self, palette: Palette, clipboard_setter: Callable[[str], None]) -> None:
         super().__init__()
@@ -475,7 +474,6 @@ class IntegerView(QWidget):
         self.word_size = 64
         self.signed = False
         self.active = False
-        self._ref: tuple[str, int] | None = None  # armed channel: (label, value)
         self._cursor_anchor: int | None = None  # Shift+arrow range origin
         self.float_mode: FloatViews | None = None  # read-only IEEE-754 display
         # Packed layouts a toolkit function produced, rendered here rather than
@@ -533,15 +531,6 @@ class IntegerView(QWidget):
 
         actions = QHBoxLayout()
         actions.setContentsMargins(12, 0, 12, 8)
-        self.pin_btn = QPushButton("pin result")
-        self.pin_btn.setProperty("class", "copyBtn")
-        self.pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.pin_btn.clicked.connect(self._emit_pin_requested)
-        actions.addWidget(self.pin_btn)
-        self.delta_label = QLabel("")
-        self.delta_label.setProperty("class", "deltaNote")
-        self.delta_label.setToolTip("set bits gained/lost vs. the previous value")
-        actions.addWidget(self.delta_label)
         self.error_meter = ErrorMeter(palette)
         actions.addWidget(self.error_meter)
         actions.addStretch(1)
@@ -595,14 +584,6 @@ class IntegerView(QWidget):
             elif value != self.scratch:
                 self.changed = value ^ self.scratch
             self.scratch = value
-        self._refresh()
-
-    def set_reference(self, label: str | None, value: int | None) -> None:
-        if label is None:
-            self._ref = None
-        else:
-            assert value is not None
-            self._ref = (label, value)
         self._refresh()
 
     def toggle_bit(self, bit: int) -> None:
@@ -745,7 +726,6 @@ class IntegerView(QWidget):
         self.error_meter.set_error(None)
         views = integer_views(self.scratch, self.word_size)
         self._set_trunc_note(views.truncated and self.active, views.value_bits)
-        self._sync_pin_button()
         dec_text = views.dec_unsigned
         if views.dec_signed != views.dec_unsigned:
             dec_text = f"{views.dec_unsigned}  ({views.dec_signed})"
@@ -772,19 +752,6 @@ class IntegerView(QWidget):
         self._set_lanes(lanes, dimmed=not self.active)
         mask = (1 << self.word_size) - 1
         changed = self.changed & mask if self.active else 0
-        if self._ref is not None and self.active:
-            ref_label, ref_value = self._ref
-            ref_masked = ref_value & mask
-            diff = self._masked_scratch ^ ref_masked
-            gained = (self._masked_scratch & diff).bit_count()
-            lost = (~self._masked_scratch & diff).bit_count()
-            self.delta_label.setText(f"Δ vs {ref_label} +{gained} -{lost}")
-        elif changed:
-            gained = (self._masked_scratch & changed).bit_count()
-            lost = (~self._masked_scratch & changed).bit_count()
-            self.delta_label.setText(f"Δ +{gained} -{lost}")
-        else:
-            self.delta_label.setText("")
         named_fields = (
             tuple((f.name, f.msb, f.lsb) for f in self.csr.fields)
             if self.csr
@@ -795,16 +762,6 @@ class IntegerView(QWidget):
         )
         self._update_slice_label()
         self._refresh_field_table()
-
-    def _sync_pin_button(self) -> None:
-        """`_emit_pin_requested` needs an integer scratch; say so up front.
-
-        Float view and the empty panel both leave it inert, and Alt+P already
-        answers "nothing to pin" — the button should not look more capable
-        than the shortcut it duplicates.
-        """
-        self.pin_btn.setEnabled(self.active)
-        self.pin_btn.setToolTip("" if self.active else "no integer result to pin")
 
     def _set_trunc_note(self, truncated: bool, value_bits: int) -> None:
         self.trunc_note.setVisible(truncated)
@@ -870,7 +827,6 @@ class IntegerView(QWidget):
         fmt = f"Q{viz.m}.{viz.n}"
         self.register_caption.set_text(f"REGISTER · {fmt}")
         self._set_trunc_note(False, 0)  # the Q word is the whole value
-        self._sync_pin_button()
         dec_text = viz.dec_text
         if viz.dec_signed_text != viz.dec_text:
             dec_text = f"{viz.dec_text}  ({viz.dec_signed_text})"
@@ -894,7 +850,6 @@ class IntegerView(QWidget):
             ],
             dimmed=False,
         )
-        self.delta_label.setText("")
         self.error_meter.set_error(viz.error_lsb, viz.error_lsb_text)
         self.grid_widget.set_state(
             viz.raw,
@@ -923,7 +878,6 @@ class IntegerView(QWidget):
             f"REGISTER · float{views.width}" if packed is not None else "REGISTER"
         )
         self._set_trunc_note(False, 0)  # the pattern is the whole value here
-        self._sync_pin_button()
         self.error_meter.set_error(None)
         self._copy_texts = {
             "HEX": views.hex,
@@ -944,7 +898,6 @@ class IntegerView(QWidget):
             ("MAN", views.mantissa_text),
         ]
         self._set_lanes(lanes, dimmed=False)
-        self.delta_label.setText("")
         self.grid_widget.set_state(
             views.bits,
             views.width,
@@ -997,7 +950,3 @@ class IntegerView(QWidget):
         else:
             self.value_to_input.emit(f"0x{self._masked_scratch:X}")
 
-    def _emit_pin_requested(self) -> None:
-        if not self.active:
-            return
-        self.pin_requested.emit(self._masked_scratch)

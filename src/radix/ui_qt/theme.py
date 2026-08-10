@@ -309,11 +309,6 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
         color: {p.bit_off};
         border-color: {p.bit_off};
     }}
-    QLabel.deltaNote {{
-        color: {p.muted};
-        font-size: {FONT_SMALL}px;
-        padding: 1px 6px;
-    }}
     QLabel.truncNote {{
         color: {p.warn};
         font-family: "{label}";
