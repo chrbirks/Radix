@@ -207,6 +207,13 @@ class MainWindow(QMainWindow):
         # list never legitimately needs horizontal scrolling.
         self.history_view.setResizeMode(QListView.ResizeMode.Adjust)
         self.history_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Per-item scrolling (Qt's default) measures the scrollbar in rows, so
+        # scrollToBottom() aligns the *top* of the topmost visible row and
+        # leaves the remainder — up to more than a full row — as dead space
+        # under the newest entry, unreachable with the scrollbar already at its
+        # maximum. Per-pixel puts the last row flush against the bottom edge,
+        # which is the whole point of a pane that reads bottom-up.
+        self.history_view.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
 
         self.help_pane = QTextEdit()
         self.help_pane.setObjectName("helpPane")

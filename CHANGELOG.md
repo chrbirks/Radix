@@ -9,6 +9,15 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Fixed
+
+- Once the history filled the pane and the scrollbar appeared, the newest entry
+  no longer sat against the input line: the list scrolled a row at a time, so
+  the bottom of the pane kept up to a full row of blank space (77px measured)
+  that no amount of scrolling could remove, and a full pane read as top-aligned
+  again. It now scrolls by the pixel, so the newest entry ends flush against the
+  bottom edge.
+
 ## [8] - 2026-08-06
 
 ### Changed

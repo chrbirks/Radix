@@ -1921,6 +1921,27 @@ def test_overflowing_history_gets_no_padding(qtbot, styled_window: MainWindow) -
     assert styled_window.history_view.verticalScrollBar().maximum() > 0
 
 
+def test_overflowing_history_pins_newest_row_to_bottom(qtbot, styled_window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Scrolled to the bottom, the newest entry meets the bottom edge.
+
+    Per-item scrolling (Qt's default for a list view) snaps the topmost visible
+    row to the top of the viewport, leaving whatever doesn't divide evenly —
+    measured at up to 77px, more than a full row — as blank space below the
+    newest entry that no amount of scrolling could remove.
+    """
+    styled_window.resize(640, 820)
+    styled_window.show()
+    qtbot.waitExposed(styled_window)
+    for i in range(40):
+        _submit(qtbot, styled_window, f"{i}+{i}")
+    qtbot.wait(10)
+    view = styled_window.history_view
+    assert view.verticalScrollBar().maximum() > 0  # the case this is about
+    last = view.visualRect(styled_window.model.index(styled_window.model.rowCount() - 1, 0))
+    dead = view.viewport().height() - 1 - last.bottom()
+    assert dead <= 1, f"{dead}px of dead space under the newest entry"
+
+
 # -- pinned rack ---------------------------------------------------------------------
 
 
