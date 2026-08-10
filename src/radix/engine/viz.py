@@ -25,6 +25,11 @@ class FixedPointViz:
     stored_text: str  # the value actually representable in Qm.n
     error_text: str  # signed quantization error (e.g. "-6.87e-6")
     error_lsb: float  # |error| in LSBs; 0..0.5 for round-to-nearest
+    hex_text: str  # nibble-grouped raw word, e.g. "0x5A82"
+    dec_text: str  # raw word as unsigned decimal
+    dec_signed_text: str  # raw word read as two's complement
+    error_lsb_text: str  # pre-formatted, e.g. "0.24 LSB"
+    bit_weights: tuple[str, ...]  # LSB-first, len == m+n, e.g. "2^-15" / "-2^0"
 
 
 @dataclass(frozen=True)

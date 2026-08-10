@@ -1,9 +1,11 @@
-"""Contextual visualization panel between the preview and the integer panel.
+"""Contextual visualization card between the preview and the integer panel.
 
-Shows the structured `viz` payload some toolkit results carry (fixed-point,
-clock, memory, and IEEE-754 cards all ride the same channel). The engine
-computes every number in the payload — this widget only draws. Hidden when
-the current value has no payload.
+Shows the card-shaped `viz` payloads some toolkit results carry — clock
+relations and memory sizing. Payloads that describe a *word* (Qm.n,
+IEEE-754) render in the REGISTER frame instead, in `bit_panel`, so the bits
+under discussion are never drawn twice at two scales. The engine computes
+every number in the payload — this widget only draws. Hidden when the
+current value has no card payload.
 """
 
 from __future__ import annotations
@@ -12,19 +14,15 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QMouseEvent, QPainter, QPaintEvent, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
-from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz, VizPayload
+from radix.engine.viz import ClockViz, MemViz
 from radix.ui_qt.theme import FONT_BODY, FONT_MICRO, Palette
 
-VIZ_CELL = 18
-VIZ_GAP = 3
-POINT_GAP = 14  # widened gap holding the binary-point tick
+CardPayload = ClockViz | MemViz
+
 CARD_PAD = 12
 LINE_H = 24
-BAR_H = VIZ_CELL + 4
-METER_W = 140  # fixed-point quantization-error meter
 METER_H = 8
 METER_TRACK_W = 200  # mem-sizing address-space utilization bar
-METER_MIN_CLEARANCE = 380  # skip the error meter if it would collide with the text
 # clkdiv error color thresholds (a UART is unhappy past ~2-3%).
 CLK_ERR_WARN_PPM = 10_000  # 1%
 CLK_ERR_BAD_PPM = 30_000  # 3%
@@ -54,7 +52,7 @@ class VizPanel(QWidget):
         self.setObjectName("vizPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.palette_tokens = palette
-        self.payload: VizPayload | None = None
+        self.payload: CardPayload | None = None
         self._hover_tip: str | None = None
         self.setMouseTracking(True)
         self.hide()
@@ -63,13 +61,11 @@ class VizPanel(QWidget):
         self.palette_tokens = palette
         self.update()
 
-    def show_payload(self, payload: VizPayload | None) -> None:
+    def show_payload(self, payload: CardPayload | None) -> None:
         self.payload = payload
         self._hover_tip = None
         self.setToolTip("")
-        if isinstance(payload, (FixedPointViz, FloatBitsViz)):
-            self.setFixedHeight(8 + LINE_H + BAR_H + LINE_H + 10)
-        elif isinstance(payload, ClockViz):
+        if isinstance(payload, ClockViz):
             lines = 2 if payload.divisor is not None else 1
             wave = WAVE_STRIP_H if _has_wave(payload) else 0
             self.setFixedHeight(8 + lines * LINE_H + wave + 10)
@@ -84,14 +80,10 @@ class VizPanel(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if isinstance(self.payload, FixedPointViz):
-            self._paint_fixed(painter, self.payload)
-        elif isinstance(self.payload, ClockViz):
+        if isinstance(self.payload, ClockViz):
             self._paint_clock(painter, self.payload)
         elif isinstance(self.payload, MemViz):
             self._paint_mem(painter, self.payload)
-        elif isinstance(self.payload, FloatBitsViz):
-            self._paint_floatbits(painter, self.payload)
         painter.end()
 
     # -- memory sizing ------------------------------------------------------------
@@ -226,107 +218,6 @@ class VizPanel(QWidget):
                     QRectF(x_duty, y_row, self.width() - CARD_PAD - x_duty, WAVE_ROW_H),
                     Qt.AlignmentFlag.AlignVCenter, duty)
 
-    # -- fixed-point Qm.n -------------------------------------------------------
-
-    def _paint_fixed(self, painter: QPainter, viz: FixedPointViz) -> None:
-        p = self.palette_tokens
-        total = viz.m + viz.n
-        font = painter.font()
-        font.setPixelSize(FONT_BODY)
-        painter.setFont(font)
-
-        # Title: format + raw word.
-        painter.setPen(QColor(p.text))
-        title = f"Q{viz.m}.{viz.n}   raw 0x{viz.raw:X}"
-        painter.drawText(QRectF(CARD_PAD, 8, self.width() - 2 * CARD_PAD, LINE_H),
-                         Qt.AlignmentFlag.AlignVCenter, title)
-
-        # Bit-cell bar: integer band (MSB cell = sign) | point | fraction band.
-        cell, y = self._fixed_geometry(total)
-        for i in range(total):
-            bit = total - 1 - i  # MSB first
-            x = CARD_PAD + i * (cell + VIZ_GAP) + (POINT_GAP if bit < viz.n else 0)
-            if bit == total - 1:
-                base = p.float_sign  # two's-complement sign bit
-            elif bit >= viz.n:
-                base = p.float_exp  # integer bits
-            else:
-                base = p.float_man  # fraction bits
-            color = QColor(base)
-            if not (viz.raw >> bit) & 1:
-                color.setAlphaF(0.22)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(x, y, cell, VIZ_CELL), 2, 2)
-        # Binary-point tick between integer and fraction bands.
-        tick_x = CARD_PAD + viz.m * (cell + VIZ_GAP) + POINT_GAP / 2 - VIZ_GAP / 2
-        painter.setPen(QColor(p.text))
-        painter.drawLine(int(tick_x), y - 2, int(tick_x), y + VIZ_CELL + 2)
-
-        # Decoded values + quantization-error meter (scale: 1/2 LSB = full).
-        y2 = y + BAR_H
-        painter.setPen(QColor(p.text))
-        if viz.error_lsb == 0:
-            text = f"value {viz.stored_text}  (exact)"
-        else:
-            text = (
-                f"{viz.exact_text} -> {viz.stored_text}"
-                f"   err {viz.error_text} ({viz.error_lsb:.2f} LSB)"
-            )
-        painter.drawText(QRectF(CARD_PAD, y2, self.width() - 2 * CARD_PAD, LINE_H),
-                         Qt.AlignmentFlag.AlignVCenter, text)
-        meter_x = self.width() - CARD_PAD - METER_W
-        meter_y = y2 + (LINE_H - METER_H) / 2
-        if meter_x > CARD_PAD + METER_MIN_CLEARANCE:  # skip if it'd collide with the text
-            track = QColor(p.bit_off)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(track)
-            painter.drawRoundedRect(QRectF(meter_x, meter_y, METER_W, METER_H), 3, 3)
-            frac = min(1.0, viz.error_lsb / 0.5)
-            if frac > 0:
-                painter.setBrush(QColor(p.warn if frac > 0.5 else p.ok))
-                painter.drawRoundedRect(QRectF(meter_x, meter_y, METER_W * frac, METER_H), 3, 3)
-
-    # -- IEEE-754 float32/float64 -------------------------------------------------
-
-    def _paint_floatbits(self, painter: QPainter, viz: FloatBitsViz) -> None:
-        p = self.palette_tokens
-        font = painter.font()
-        font.setPixelSize(FONT_BODY)
-        painter.setFont(font)
-
-        # Title: format + stored value + raw pattern (+ the pre-rounding value).
-        painter.setPen(QColor(p.text))
-        title = f"float{viz.width}   {viz.stored_text}   raw {viz.hex_text}"
-        if viz.rounded and viz.exact_text != viz.stored_text:
-            title += f"   (from {viz.exact_text})"
-        painter.drawText(QRectF(CARD_PAD, 8, self.width() - 2 * CARD_PAD, LINE_H),
-                         Qt.AlignmentFlag.AlignVCenter, title)
-
-        # Bit-cell bar: sign | exponent | mantissa bands, a field gap between each.
-        cell, y = self._floatbits_geometry(viz.width)
-        painter.setPen(Qt.PenStyle.NoPen)
-        for i in range(viz.width):
-            bit = viz.width - 1 - i  # MSB first
-            if bit == viz.width - 1:
-                base, shift = p.float_sign, 0  # sign cell
-            elif bit >= viz.man_width:
-                base, shift = p.float_exp, POINT_GAP  # exponent band
-            else:
-                base, shift = p.float_man, 2 * POINT_GAP  # mantissa band
-            x = CARD_PAD + i * (cell + VIZ_GAP) + shift
-            color = QColor(base)
-            if not (viz.bits >> bit) & 1:
-                color.setAlphaF(0.22)
-            painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(x, y, cell, VIZ_CELL), 2, 2)
-
-        # Decoded fields.
-        painter.setPen(QColor(p.text))
-        line = f"sign {viz.sign_text}   exp {viz.exponent_text}   man {viz.mantissa_text}"
-        painter.drawText(QRectF(CARD_PAD, y + BAR_H, self.width() - 2 * CARD_PAD, LINE_H),
-                         Qt.AlignmentFlag.AlignVCenter, line)
-
     # -- hover tooltips -----------------------------------------------------------
     # Geometry helpers below are shared with the matching _paint_* method so the
     # hit-test grid never drifts from what's actually drawn.
@@ -339,75 +230,9 @@ class VizPanel(QWidget):
         self.setToolTip(tooltip or "")
 
     def _tooltip_at(self, pos: QPointF) -> str | None:
-        if isinstance(self.payload, FixedPointViz):
-            bit = self._fixed_bit_at(self.payload, pos)
-            return None if bit is None else self._fixed_bit_tooltip(self.payload, bit)
-        if isinstance(self.payload, FloatBitsViz):
-            bit = self._floatbits_bit_at(self.payload, pos)
-            return None if bit is None else self._floatbits_bit_tooltip(self.payload, bit)
         if isinstance(self.payload, ClockViz):
             return self._clock_tooltip(self.payload, pos)
         return None
-
-    def _fixed_geometry(self, total: int) -> tuple[int, int]:
-        cell = VIZ_CELL
-        need = total * (cell + VIZ_GAP) + POINT_GAP + 2 * CARD_PAD
-        if need > self.width():  # shrink to fit very wide formats
-            cell = max(5, (self.width() - 2 * CARD_PAD - POINT_GAP) // total - VIZ_GAP)
-        return cell, 8 + LINE_H
-
-    def _fixed_bit_at(self, viz: FixedPointViz, pos: QPointF) -> int | None:
-        total = viz.m + viz.n
-        cell, y = self._fixed_geometry(total)
-        for bit in range(total):
-            i = total - 1 - bit
-            x = CARD_PAD + i * (cell + VIZ_GAP) + (POINT_GAP if bit < viz.n else 0)
-            if QRectF(x, y, cell, VIZ_CELL).contains(pos):
-                return bit
-        return None
-
-    def _fixed_bit_tooltip(self, viz: FixedPointViz, bit: int) -> str:
-        state = (viz.raw >> bit) & 1
-        total = viz.m + viz.n
-        if bit == total - 1:
-            field = f"sign, weight -2^{viz.m - 1}"
-        elif bit >= viz.n:
-            field = f"integer bit, weight 2^{bit - viz.n}"
-        else:
-            field = f"fraction bit, weight 2^-{viz.n - bit}"
-        return f"bit {bit} = {state}   {field}"
-
-    def _floatbits_geometry(self, width: int) -> tuple[int, int]:
-        cell = VIZ_CELL
-        need = width * (cell + VIZ_GAP) + 2 * POINT_GAP + 2 * CARD_PAD
-        if need > self.width():  # shrink so 64 cells fit the minimum window
-            cell = max(4, (self.width() - 2 * CARD_PAD - 2 * POINT_GAP) // width - VIZ_GAP)
-        return cell, 8 + LINE_H
-
-    def _floatbits_bit_at(self, viz: FloatBitsViz, pos: QPointF) -> int | None:
-        cell, y = self._floatbits_geometry(viz.width)
-        for bit in range(viz.width):
-            i = viz.width - 1 - bit
-            if bit == viz.width - 1:
-                shift = 0
-            elif bit >= viz.man_width:
-                shift = POINT_GAP
-            else:
-                shift = 2 * POINT_GAP
-            x = CARD_PAD + i * (cell + VIZ_GAP) + shift
-            if QRectF(x, y, cell, VIZ_CELL).contains(pos):
-                return bit
-        return None
-
-    def _floatbits_bit_tooltip(self, viz: FloatBitsViz, bit: int) -> str:
-        state = (viz.bits >> bit) & 1
-        if bit == viz.width - 1:
-            field = "sign"
-        elif bit >= viz.man_width:
-            field = f"exponent bit {bit - viz.man_width}"
-        else:
-            field = f"mantissa bit {bit}"
-        return f"bit {bit} = {state}   {field}"
 
     def _clock_tooltip(self, viz: ClockViz, pos: QPointF) -> str | None:
         err_hit = viz.divisor is not None and viz.error_ppm is not None

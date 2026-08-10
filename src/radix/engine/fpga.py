@@ -13,7 +13,7 @@ import struct
 
 import mpmath
 
-from radix.engine.formatter import float_views, format_si
+from radix.engine.formatter import float_views, format_si, group_digits
 from radix.engine.functions import (
     EvalContext,
     FunctionDomainError,
@@ -241,6 +241,48 @@ def _q_format(args: list[Number], what: str) -> tuple[int, int, int]:
     return m, n, m + n
 
 
+def _q_bit_weights(m: int, n: int) -> tuple[str, ...]:
+    """Per-bit weight text, LSB-first. The MSB carries the two's-complement sign."""
+    total = m + n
+    weights = []
+    for bit in range(total):
+        if bit == total - 1:
+            weights.append(f"-2^{m - 1}")
+        elif bit >= n:
+            weights.append(f"2^{bit - n}")
+        else:
+            weights.append(f"2^-{n - bit}")
+    return tuple(weights)
+
+
+def _fixed_viz(
+    m: int,
+    n: int,
+    raw: int,
+    exact_text: str,
+    stored_text: str,
+    error_text: str,
+    error_lsb: float,
+) -> FixedPointViz:
+    """Build the payload, deriving every pre-formatted field the UI only draws."""
+    total = m + n
+    signed = raw - (1 << total) if raw >> (total - 1) else raw
+    return FixedPointViz(
+        m=m,
+        n=n,
+        raw=raw,
+        exact_text=exact_text,
+        stored_text=stored_text,
+        error_text=error_text,
+        error_lsb=error_lsb,
+        hex_text=group_digits(f"{raw:X}", 4, min_width=-(-total // 4), prefix="0x"),
+        dec_text=str(raw),
+        dec_signed_text=str(signed),
+        error_lsb_text="0 LSB" if error_lsb == 0 else f"{error_lsb:.2f} LSB",
+        bit_weights=_q_bit_weights(m, n),
+    )
+
+
 def _fix(args: list[Number], ctx: EvalContext) -> Value:
     """Real → Qm.n two's-complement raw value (round to nearest)."""
     m, n, total = _q_format(args, "fix")
@@ -255,10 +297,10 @@ def _fix(args: list[Number], ctx: EvalContext) -> Value:
     quantized = mpmath.mpf(scaled) / (1 << n)
     err = x - quantized
     note = f"Q{m}.{n}, quantization error = {mpmath.nstr(err, 3)}"
-    viz = FixedPointViz(
-        m=m,
-        n=n,
-        raw=raw,
+    viz = _fixed_viz(
+        m,
+        n,
+        raw,
         exact_text=mpmath.nstr(x, 8),
         stored_text=mpmath.nstr(quantized, 8),
         error_text=mpmath.nstr(err, 3),
@@ -275,10 +317,10 @@ def _unfix(args: list[Number], ctx: EvalContext) -> Value:
     signed = wrapped - (1 << total) if wrapped >> (total - 1) else wrapped
     real = mpmath.mpf(signed) / (1 << n)
     text = mpmath.nstr(real, 8)
-    viz = FixedPointViz(
-        m=m,
-        n=n,
-        raw=wrapped,
+    viz = _fixed_viz(
+        m,
+        n,
+        wrapped,
         exact_text=text,
         stored_text=text,  # decoding is exact: no quantization step
         error_text="0",

@@ -9,6 +9,23 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Changed
+
+- `fix()`/`unfix()` and `float32()`/`float64()` (and their inverses) now render
+  in the REGISTER frame instead of a separate TRACE card, the way a real value
+  already did under FLOAT ON. The bit grid becomes the word being discussed —
+  12 cells for a Q8.4, 32 for a float32 — banded sign / integer / fraction (or
+  sign / exponent / mantissa) with a tick at the binary point, and the READOUT
+  lanes carry the decoded value: `HEX / DEC / Q8.4 / ERR` for fixed-point,
+  `HEX / VAL / SGN / EXP / MAN` for packed floats. Previously the same bits were
+  drawn twice at two different scales, and the REGISTER grid below the card
+  showed the raw word at the session word size, contradicting it. The
+  quantization-error meter (a full bar is ½ LSB) moved to the panel's action
+  row, and the caption names the format (`REGISTER · Q8.4`). Per-bit hover
+  tooltips came along, now including each bit's weight (`weight 2^-15`).
+  Like the FLOAT ON view, these layouts are read-only; TRACE is now only ever
+  the clock and memory cards.
+
 ### Removed
 
 - The ASC lane in the READOUT frame, which rendered the result's bytes as ASCII
@@ -18,6 +35,9 @@ ambiguity to resolve about major/minor/patch.
 
 ### Fixed
 
+- `unfloat32()` at a 64-bit word size showed a *double* breakdown of the decoded
+  value next to a card describing the single-precision pattern it came from. The
+  panel now follows the payload's own width.
 - Once the history filled the pane and the scrollbar appeared, the newest entry
   no longer sat against the input line: the list scrolled a row at a time, so
   the bottom of the pane kept up to a full row of blank space (77px measured)

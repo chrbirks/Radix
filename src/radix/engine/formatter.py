@@ -100,7 +100,7 @@ def float_views(value: Number, word_size: int) -> FloatViews | None:
         width=word_size,
         exp_width=exp_width,
         man_width=man_width,
-        hex=_group(f"{bits:X}", 4, min_width=word_size // 4, prefix="0x"),
+        hex=group_digits(f"{bits:X}", 4, min_width=word_size // 4, prefix="0x"),
         sign_text="-" if sign else "+",
         exponent_text=exponent_text,
         mantissa_text=mantissa_text,
@@ -151,6 +151,16 @@ def format_real(x: mpmath.mpf, notation: Notation = "auto") -> str:
     raise ValueError(f"unknown notation {notation!r}")
 
 
+def group_digits(digits: str, group: int, min_width: int, prefix: str) -> str:
+    """Zero-pad to `min_width` and split into `_`-separated groups, LSB-aligned."""
+    padded = digits.rjust(min_width, "0")
+    rem = len(padded) % group
+    parts = ([padded[:rem]] if rem else []) + [
+        padded[i : i + group] for i in range(rem, len(padded), group)
+    ]
+    return prefix + "_".join(parts)
+
+
 def format_int_base(value: int, base: str, word_size: int) -> str:
     """Compact hex/bin rendering of an integer result (display base option).
 
@@ -162,9 +172,9 @@ def format_int_base(value: int, base: str, word_size: int) -> str:
         return str(value)
     wrapped = value & ((1 << word_size) - 1) if value < 0 else value
     if base == "hex":
-        return _group(f"{wrapped:X}", 4, min_width=1, prefix="0x")
+        return group_digits(f"{wrapped:X}", 4, min_width=1, prefix="0x")
     if base == "bin":
-        return _group(f"{wrapped:b}", 4, min_width=1, prefix="0b")
+        return group_digits(f"{wrapped:b}", 4, min_width=1, prefix="0b")
     raise ValueError(f"unknown base {base!r}")
 
 
@@ -187,10 +197,10 @@ def integer_views(value: int, word_size: int) -> IntegerViews:
     signed_value = wrapped - (1 << word_size) if wrapped >> (word_size - 1) else wrapped
     width = bits_needed(value)
     return IntegerViews(
-        hex=_group(f"{wrapped:X}", 4, min_width=word_size // 4, prefix="0x"),
+        hex=group_digits(f"{wrapped:X}", 4, min_width=word_size // 4, prefix="0x"),
         dec_unsigned=str(wrapped),
         dec_signed=str(signed_value),
-        binary=_group(f"{wrapped:b}", 4, min_width=word_size, prefix="0b"),
+        binary=group_digits(f"{wrapped:b}", 4, min_width=word_size, prefix="0b"),
         value_bits=width,
         truncated=width > word_size,
     )
@@ -239,15 +249,6 @@ def _eng(digits: str, exponent: int, negative: bool, si: bool) -> str:
     if si and eng_exp in _SI_BY_EXP:
         return f"{sign}{mantissa}{_SI_BY_EXP[eng_exp]}"
     return f"{sign}{mantissa}e{eng_exp:+d}"
-
-
-def _group(digits: str, group: int, min_width: int, prefix: str) -> str:
-    padded = digits.rjust(min_width, "0")
-    rem = len(padded) % group
-    parts = ([padded[:rem]] if rem else []) + [
-        padded[i : i + group] for i in range(rem, len(padded), group)
-    ]
-    return prefix + "_".join(parts)
 
 
 def format_si(x: Number) -> str:

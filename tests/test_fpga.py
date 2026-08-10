@@ -202,6 +202,14 @@ def test_fix_attaches_viz_payload() -> None:
     assert (viz.m, viz.n, viz.raw) == (1, 15, 0x4000)
     assert viz.error_lsb == 0.0  # 0.5 is exactly representable
     assert viz.stored_text == "0.5"
+    # Pre-formatted for the REGISTER lanes: the panel derives nothing itself.
+    assert viz.hex_text == "0x4000"
+    assert (viz.dec_text, viz.dec_signed_text) == ("16384", "16384")
+    assert viz.error_lsb_text == "0 LSB"
+    assert len(viz.bit_weights) == 16
+    assert (viz.bit_weights[15], viz.bit_weights[14], viz.bit_weights[0]) == (
+        "-2^0", "2^-1", "2^-15",
+    )
 
     outcome = session.evaluate("unfix(0x5A82, 1, 15)")
     assert outcome.value is not None
@@ -209,6 +217,24 @@ def test_fix_attaches_viz_payload() -> None:
     assert isinstance(viz, FixedPointViz)
     assert viz.raw == 0x5A82
     assert viz.error_lsb == 0.0 and viz.error_text == "0"
+
+    outcome = session.evaluate("fix(-1.5, 8, 4)")  # negative: signed decimal differs
+    assert outcome.value is not None
+    viz = outcome.value.viz
+    assert isinstance(viz, FixedPointViz)
+    assert (viz.hex_text, viz.dec_text, viz.dec_signed_text) == ("0xFE8", "4072", "-24")
+    assert viz.bit_weights[11] == "-2^7"
+
+
+def test_fix_quantization_error_is_reported_in_lsbs() -> None:
+    from radix.engine.viz import FixedPointViz
+
+    outcome = Session().evaluate("fix(0.7071, 1, 15)")
+    assert outcome.value is not None
+    viz = outcome.value.viz
+    assert isinstance(viz, FixedPointViz)
+    assert 0.25 < viz.error_lsb < 0.26
+    assert viz.error_lsb_text == "0.25 LSB"
 
 
 def test_fix_range_errors() -> None:

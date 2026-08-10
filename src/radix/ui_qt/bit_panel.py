@@ -9,6 +9,7 @@ result reseeds the scratch. Float results grey the panel.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from radix.engine.csr import Csr, format_field_value
 from radix.engine.formatter import FloatViews, format_int_base, integer_views
+from radix.engine.viz import FixedPointViz, FloatBitsViz
 from radix.ui_qt.theme import FONT_MICRO, Palette
 from radix.ui_qt.zones import ZoneCaption, margin_wrap
 
@@ -35,9 +37,40 @@ FIELD_H = 20  # field-band strip above the hex strip, present only with a csr
 FIELD_LABEL_GAP = 4  # breathing room between the field name and its bracket line
 ROW_H = HEX_H + CELL + GAP + INDEX_H
 BYTE_WIDTH = 8 * (CELL + GAP) + 2 * NIBBLE_GAP  # one byte group incl. nibble gaps
-LANE_ROWS = 4  # max simultaneous lanes (HEX/DEC/BIN, or HEX/SGN/EXP/MAN)
+LANE_ROWS = 5  # max simultaneous lanes (HEX/DEC/BIN, or HEX/VAL/SGN/EXP/MAN)
 TOP_MARGIN = 8  # above the first row, so tall hex-digit labels don't clip the widget edge
 BOTTOM_MARGIN = 4
+METER_W = 120  # quantization-error meter in the actions row
+METER_H = 8
+
+
+@dataclass(frozen=True)
+class BitBands:
+    """Read-only three-band layout: MSB sign cell | middle band | low band.
+
+    IEEE-754 (sign/exponent/mantissa) and Qm.n (sign/integer/fraction) are the
+    same shape, so both drive the grid through this. `low_width` alone is
+    enough — the middle band is whatever is left between it and the sign cell.
+    """
+
+    low_width: int  # mantissa bits / fraction bits
+    names: tuple[str, str, str] = ("sign", "exponent", "mantissa")
+    point_bit: int | None = None  # binary point sits left of this bit (-1: right of the LSB)
+    bit_notes: tuple[str, ...] | None = None  # LSB-first per-bit weight text, for tooltips
+
+
+def _views_of(packed: FloatBitsViz) -> FloatViews:
+    """The same IEEE-754 decomposition under the formatter's field names."""
+    return FloatViews(
+        bits=packed.bits,
+        width=packed.width,
+        exp_width=packed.exp_width,
+        man_width=packed.man_width,
+        hex=packed.hex_text,
+        sign_text=packed.sign_text,
+        exponent_text=packed.exponent_text,
+        mantissa_text=packed.mantissa_text,
+    )
 
 
 class BitGrid(QWidget):
@@ -59,9 +92,9 @@ class BitGrid(QWidget):
         self.changed = 0  # bits that flipped vs. the previous value (outlined)
         self.enabled_look = True
         self.selection: tuple[int, int] | None = None  # (hi, lo) drag-selected range
-        # (exp_width, man_width) when showing an IEEE-754 pattern: cells get
-        # sign/exponent/mantissa band colors and become read-only.
-        self.float_fields: tuple[int, int] | None = None
+        # Set when showing a packed layout (IEEE-754 or Qm.n): cells get band
+        # colors and become read-only.
+        self.bands: BitBands | None = None
         # (name, msb, lsb) tuples, msb-descending, when a register field
         # layout is showing. Unlike float mode, cells stay clickable/editable.
         self.named_fields: tuple[tuple[str, int, int], ...] | None = None
@@ -81,25 +114,24 @@ class BitGrid(QWidget):
         word_size: int,
         enabled: bool,
         changed: int = 0,
-        float_fields: tuple[int, int] | None = None,
+        bands: BitBands | None = None,
         named_fields: tuple[tuple[str, int, int], ...] | None = None,
     ) -> None:
         self.value = value
         self.word_size = word_size
         self.enabled_look = enabled
         self.changed = changed
-        self.float_fields = float_fields
+        self.bands = bands
         self.named_fields = named_fields
         self._apply_height()
         self.update()
 
-    def _field_of(self, bit: int) -> str:
-        """"sign" / "exponent" / "mantissa" for a bit in float mode."""
-        assert self.float_fields is not None
-        _, man_width = self.float_fields
+    def _band_of(self, bit: int) -> int:
+        """0 (sign) / 1 (exponent, integer) / 2 (mantissa, fraction) for a bit."""
+        assert self.bands is not None
         if bit == self.word_size - 1:
-            return "sign"
-        return "exponent" if bit >= man_width else "mantissa"
+            return 0
+        return 1 if bit >= self.bands.low_width else 2
 
     def _field_index_of(self, bit: int) -> int | None:
         """Index into `self.named_fields` of the field containing `bit`, if any.
@@ -137,12 +169,23 @@ class BitGrid(QWidget):
         self._apply_height()
         super().resizeEvent(event)
 
+    def _row_span(self, row: int) -> tuple[int, int]:
+        """(highest, lowest) bit index drawn on `row`."""
+        per_row = self._bits_per_row()
+        hi = self.word_size - 1 - row * per_row
+        return hi, max(0, hi - per_row + 1)
+
     def _cell_rect(self, bit: int) -> QRectF:
         """Rect for a bit index (0 = LSB). MSB is top-left."""
         per_row = self._bits_per_row()
         pos = self.word_size - 1 - bit  # 0 for MSB
         row, col = divmod(pos, per_row)
-        nibble_gaps = col // 4
+        # Nibble gaps sit between bit 4k and bit 4k-1, counted from the row's
+        # leftmost bit. For word sizes that are a multiple of 4 (every session
+        # word size) this is exactly `col // 4`; packed layouts like Q2.3 are
+        # the only case where the two differ.
+        row_hi, _ = self._row_span(row)
+        nibble_gaps = row_hi // 4 - bit // 4
         x = 4 + col * (CELL + GAP) + nibble_gaps * NIBBLE_GAP
         field_offset = FIELD_H if self.named_fields else 0
         y = TOP_MARGIN + row * self._row_h() + field_offset + HEX_H
@@ -158,12 +201,12 @@ class BitGrid(QWidget):
         on = QColor(p.bit_on if self.enabled_look else p.bit_off)
         off = QColor(p.bit_off)
         off.setAlphaF(0.6 if not self.enabled_look else 1.0)
-        field_colors = {"sign": p.float_sign, "exponent": p.float_exp, "mantissa": p.float_man}
+        band_colors = (p.float_sign, p.float_exp, p.float_man)
         for bit in range(self.word_size):
             rect = self._cell_rect(bit)
             set_ = (self.value >> bit) & 1
-            if self.float_fields is not None and self.enabled_look:
-                color = QColor(field_colors[self._field_of(bit)])
+            if self.bands is not None and self.enabled_look:
+                color = QColor(band_colors[self._band_of(bit)])
                 if not set_:
                     color.setAlphaF(0.22)
                 brush = color
@@ -181,6 +224,8 @@ class BitGrid(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(brush)
             painter.drawRoundedRect(rect, 2, 2)
+        if self.bands is not None and self.bands.point_bit is not None:
+            self._paint_binary_point(painter, self.bands.point_bit)
         # Drag-selected range: translucent cursor-amber band + text-color
         # outline (visible over both set and unset cells).
         if self.enabled_look and self.selection is not None:
@@ -204,35 +249,62 @@ class BitGrid(QWidget):
         label_font.setPixelSize(16)
         painter.setFont(label_font)
         # Per-nibble hex digit above each 4-cell group (muted when zero,
-        # phosphor trace color when set).
-        for nibble in range(self.word_size // 4):
-            digit = (self.value >> (4 * nibble)) & 0xF
-            msb_cell = self._cell_rect(4 * nibble + 3)
-            lsb_cell = self._cell_rect(4 * nibble)
-            hex_rect = QRectF(
-                msb_cell.left(),
-                msb_cell.top() - HEX_H,
-                lsb_cell.right() - msb_cell.left(),
-                HEX_H - 2,
-            )
-            strong = self.enabled_look and digit != 0
-            painter.setPen(QColor(p.bit_on if strong else p.muted))
-            painter.drawText(
-                hex_rect,
-                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                f"{digit:X}",
-            )
+        # phosphor trace color when set). Walked per row so a group is never
+        # split across the wrap, and so a word size that isn't a multiple of 4
+        # (Qm.n formats only) still gets its leading partial digit.
+        for row in range(self._rows()):
+            row_hi, row_lo = self._row_span(row)
+            hi = row_hi
+            while hi >= row_lo:
+                lo = max(row_lo, hi // 4 * 4)
+                digit = (self.value >> lo) & ((1 << (hi - lo + 1)) - 1)
+                msb_cell = self._cell_rect(hi)
+                lsb_cell = self._cell_rect(lo)
+                hex_rect = QRectF(
+                    msb_cell.left(),
+                    msb_cell.top() - HEX_H,
+                    lsb_cell.right() - msb_cell.left(),
+                    HEX_H - 2,
+                )
+                strong = self.enabled_look and digit != 0
+                painter.setPen(QColor(p.bit_on if strong else p.muted))
+                painter.drawText(
+                    hex_rect,
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                    f"{digit:X}",
+                )
+                hi = lo - 1
         # Bit-index labels under each nibble's MSB cell (63, 59, … 3), plus bit 0.
         index_font = painter.font()
         index_font.setPixelSize(FONT_MICRO)
         painter.setFont(index_font)
         painter.setPen(QColor(self.palette_tokens.muted))
         for bit in range(self.word_size):
-            if bit % 4 == 3 or bit == 0:
+            if bit % 4 == 3 or bit == 0 or bit == self.word_size - 1:
                 cell = self._cell_rect(bit)
                 label_rect = QRectF(cell.left() - GAP, cell.bottom() + 1, CELL + 2 * GAP, INDEX_H)
                 painter.drawText(label_rect, Qt.AlignmentFlag.AlignHCenter, str(bit))
         painter.end()
+
+    def _paint_binary_point(self, painter: QPainter, point_bit: int) -> None:
+        """Radix-point tick in the gap left of `point_bit` (-1: right of the LSB)."""
+        if point_bit >= self.word_size:
+            return
+        if point_bit >= 0:
+            cell = self._cell_rect(point_bit)
+            left = self._cell_rect(point_bit + 1) if point_bit + 1 < self.word_size else None
+            # Centre it in the real gap, which is a nibble gap at 4-bit boundaries;
+            # a point landing at a row wrap falls back to the row's left edge.
+            x = (
+                (left.right() + cell.left()) / 2
+                if left is not None and left.top() == cell.top()
+                else cell.left() - GAP / 2
+            )
+        else:
+            cell = self._cell_rect(0)
+            x = cell.right() + GAP / 2
+        painter.setPen(QPen(QColor(self.palette_tokens.text), 2))
+        painter.drawLine(QPointF(x, cell.top() - 3), QPointF(x, cell.bottom() + 3))
 
     def _paint_field_bands(self, painter: QPainter) -> None:
         """Bracket + name over each row a field spans (dimension-line style).
@@ -299,7 +371,7 @@ class BitGrid(QWidget):
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if not self.enabled_look or self.float_fields is not None:  # float view: read-only
+        if not self.enabled_look or self.bands is not None:  # packed layout: read-only
             return
         self._press_bit = self._bit_at(event.position())
         self._dragging = False
@@ -325,8 +397,11 @@ class BitGrid(QWidget):
             self.setToolTip("")
             return
         state = (self.value >> bit) & 1
-        if self.float_fields is not None:
-            self.setToolTip(f"bit {bit} = {state}    {self._field_of(bit)}")
+        if self.bands is not None:
+            tip = f"bit {bit} = {state}    {self.bands.names[self._band_of(bit)]}"
+            if self.bands.bit_notes is not None:
+                tip += f", weight {self.bands.bit_notes[bit]}"
+            self.setToolTip(tip)
         elif self.named_fields is not None and (idx := self._field_index_of(bit)) is not None:
             name, msb, lsb = self.named_fields[idx]
             self.setToolTip(f"bit {bit} = {state}    {name}[{msb}:{lsb}]")
@@ -341,6 +416,46 @@ class BitGrid(QWidget):
             self.bit_toggled.emit(self._press_bit)
         self._press_bit = None
         self._dragging = False
+
+
+class ErrorMeter(QWidget):
+    """Quantization error as a fraction of half an LSB (round-to-nearest worst case).
+
+    Only fixed-point results have one, so the widget hides itself otherwise.
+    """
+
+    def __init__(self, palette: Palette) -> None:
+        super().__init__()
+        self.palette_tokens = palette
+        self._fraction = 0.0
+        self.setFixedSize(METER_W, METER_H + 6)
+        self.hide()
+
+    def set_error(self, error_lsb: float | None, text: str | None = None) -> None:
+        if error_lsb is None:
+            self.hide()
+            return
+        self._fraction = min(1.0, error_lsb / 0.5)
+        self.setToolTip(f"quantization error {text} — a full bar is 1/2 LSB")
+        self.show()
+        self.update()
+
+    def set_palette(self, palette: Palette) -> None:
+        self.palette_tokens = palette
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = self.palette_tokens
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        y = (self.height() - METER_H) / 2
+        painter.setBrush(QColor(p.bit_off))
+        painter.drawRoundedRect(QRectF(0, y, METER_W, METER_H), 3, 3)
+        if self._fraction > 0:
+            painter.setBrush(QColor(p.warn if self._fraction > 0.5 else p.ok))
+            painter.drawRoundedRect(QRectF(0, y, METER_W * self._fraction, METER_H), 3, 3)
+        painter.end()
 
 
 class IntegerView(QWidget):
@@ -363,6 +478,10 @@ class IntegerView(QWidget):
         self._ref: tuple[str, int] | None = None  # armed channel: (label, value)
         self._cursor_anchor: int | None = None  # Shift+arrow range origin
         self.float_mode: FloatViews | None = None  # read-only IEEE-754 display
+        # Packed layouts a toolkit function produced, rendered here rather than
+        # in a separate card so REGISTER always *is* the word being discussed.
+        self.fixed_view: FixedPointViz | None = None  # fix()/unfix() Qm.n
+        self.float_bits: FloatBitsViz | None = None  # float32()/float64() and their inverses
         self.csr: Csr | None = None  # field layout for the shown value
 
         self.rows: dict[str, tuple[QLabel, QLabel]] = {}
@@ -423,6 +542,8 @@ class IntegerView(QWidget):
         self.delta_label.setProperty("class", "deltaNote")
         self.delta_label.setToolTip("set bits gained/lost vs. the previous value")
         actions.addWidget(self.delta_label)
+        self.error_meter = ErrorMeter(palette)
+        actions.addWidget(self.error_meter)
         actions.addStretch(1)
         self.slice_label = QLabel("")
         self.slice_label.setProperty("class", "sliceNote")
@@ -448,6 +569,8 @@ class IntegerView(QWidget):
         word_size: int,
         signed: bool,
         float_views: FloatViews | None = None,
+        fixed_view: FixedPointViz | None = None,
+        float_bits: FloatBitsViz | None = None,
         csr: Csr | None = None,
     ) -> None:
         # scratch is kept unmasked: cycling the word size must only change how
@@ -459,6 +582,8 @@ class IntegerView(QWidget):
         self.word_size = word_size
         self.signed = signed
         self.float_mode = float_views if value is None else None
+        self.fixed_view = fixed_view if value is None else None
+        self.float_bits = float_bits if value is None else None
         self.csr = csr
         if value is None:  # nothing editable left for the cursor to sit on
             self.stop_cursor()
@@ -507,7 +632,7 @@ class IntegerView(QWidget):
 
     def start_cursor(self) -> bool:
         """Place the cursor (on the MSB) if there is an editable grid. """
-        if not self.active or self.float_mode is not None:
+        if not self.active or self._packed_mode:
             return False
         if self.grid_widget.cursor_bit is None:
             self._set_cursor(self.word_size - 1)
@@ -558,6 +683,15 @@ class IntegerView(QWidget):
         self._cursor_anchor = None
 
     @property
+    def _packed_mode(self) -> bool:
+        """A read-only layout is showing: IEEE-754 (view or result) or Qm.n."""
+        return (
+            self.float_mode is not None
+            or self.fixed_view is not None
+            or self.float_bits is not None
+        )
+
+    @property
     def _masked_scratch(self) -> int:
         return self.scratch & ((1 << self.word_size) - 1)
 
@@ -598,9 +732,17 @@ class IntegerView(QWidget):
             self.copy_base(key)
 
     def _refresh(self) -> None:
+        if self.fixed_view is not None:
+            self._refresh_fixed(self.fixed_view)
+            return
+        if self.float_bits is not None:
+            self._refresh_float(_views_of(self.float_bits), packed=self.float_bits)
+            return
         if self.float_mode is not None:
             self._refresh_float(self.float_mode)
             return
+        self.register_caption.set_text("REGISTER")
+        self.error_meter.set_error(None)
         views = integer_views(self.scratch, self.word_size)
         self._set_trunc_note(views.truncated and self.active, views.value_bits)
         self._sync_pin_button()
@@ -718,22 +860,85 @@ class IntegerView(QWidget):
         self.grid_widget.set_selection((f.msb, f.lsb))
         self._update_slice_label()
 
-    def _refresh_float(self, views: FloatViews) -> None:
+    def _refresh_fixed(self, viz: FixedPointViz) -> None:
+        """Read-only Qm.n mode: the raw word, banded sign/integer/fraction.
+
+        Like float mode, the scratch value is untouched — the previous integer
+        reappears intact once another result arrives.
+        """
+        total = viz.m + viz.n
+        fmt = f"Q{viz.m}.{viz.n}"
+        self.register_caption.set_text(f"REGISTER · {fmt}")
+        self._set_trunc_note(False, 0)  # the Q word is the whole value
+        self._sync_pin_button()
+        dec_text = viz.dec_text
+        if viz.dec_signed_text != viz.dec_text:
+            dec_text = f"{viz.dec_text}  ({viz.dec_signed_text})"
+        value_text = (
+            f"{viz.stored_text}  (exact)"
+            if viz.error_lsb == 0
+            else f"{viz.exact_text} → {viz.stored_text}"
+        )
+        self._copy_texts = {
+            "HEX": viz.hex_text,
+            "DEC": viz.dec_text,
+            fmt: viz.stored_text,
+            "ERR": viz.error_text,
+        }
+        self._set_lanes(
+            [
+                ("HEX", viz.hex_text),
+                ("DEC", dec_text),
+                (fmt, value_text),
+                ("ERR", f"{viz.error_text}  ({viz.error_lsb_text})"),
+            ],
+            dimmed=False,
+        )
+        self.delta_label.setText("")
+        self.error_meter.set_error(viz.error_lsb, viz.error_lsb_text)
+        self.grid_widget.set_state(
+            viz.raw,
+            total,
+            True,
+            bands=BitBands(
+                low_width=min(viz.n, total - 1),
+                names=("sign", "integer", "fraction"),
+                point_bit=viz.n - 1 if viz.n else -1,
+                bit_notes=viz.bit_weights,
+            ),
+        )
+        self._update_slice_label()
+
+    def _refresh_float(self, views: FloatViews, packed: FloatBitsViz | None = None) -> None:
         """Read-only IEEE-754 mode: bit pattern + decoded sign/exponent/mantissa.
+
+        `packed` is set when a float32()/float64() call produced the pattern
+        (rather than the FLOAT ON view of a plain real), and adds the stored
+        value the format actually holds.
 
         The scratch value is untouched — leaving float mode restores the
         integer view exactly as it was.
         """
+        self.register_caption.set_text(
+            f"REGISTER · float{views.width}" if packed is not None else "REGISTER"
+        )
         self._set_trunc_note(False, 0)  # the pattern is the whole value here
         self._sync_pin_button()
+        self.error_meter.set_error(None)
         self._copy_texts = {
             "HEX": views.hex,
             "SGN": views.sign_text,
             "EXP": views.exponent_text,
             "MAN": views.mantissa_text,
         }
-        lanes = [
-            ("HEX", views.hex),
+        lanes: list[tuple[str, str]] = [("HEX", views.hex)]
+        if packed is not None:
+            value_text = packed.stored_text
+            if packed.rounded and packed.exact_text != packed.stored_text:
+                value_text += f"   (rounded from {packed.exact_text})"
+            self._copy_texts["VAL"] = packed.stored_text
+            lanes.append(("VAL", value_text))
+        lanes += [
             ("SGN", views.sign_text),
             ("EXP", views.exponent_text),
             ("MAN", views.mantissa_text),
@@ -744,7 +949,7 @@ class IntegerView(QWidget):
             views.bits,
             views.width,
             True,
-            float_fields=(views.exp_width, views.man_width),
+            bands=BitBands(low_width=views.man_width),
         )
         self._update_slice_label()
 
@@ -771,12 +976,13 @@ class IntegerView(QWidget):
         self.readout_caption.set_palette(palette)
         self.register_caption.set_palette(palette)
         self.grid_widget.set_palette(palette)
+        self.error_meter.set_palette(palette)
         self._refresh()  # re-render the BIN highlight color
 
     # -- actions --------------------------------------------------------------
 
     def copy_base(self, base: str) -> None:
-        if not self.active and self.float_mode is None:
+        if not self.active and not self._packed_mode:
             return
         self._clipboard(self._copy_texts[base])  # plain text, never the rich-text markup
         self.copied.emit(f"{base} copied")

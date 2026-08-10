@@ -94,7 +94,8 @@ def test_float_result_shows_float64_at_64bit_word_size(qtbot, window: MainWindow
     assert window.intview.float_mode is not None
     assert window.intview.rows["HEX"][1].text() == "0x4004_0000_0000_0000"
     assert window.intview.rows["EXP"][1].text() == "1024 - bias 1023 = 2^1"
-    assert window.intview.grid_widget.float_fields == (11, 52)
+    assert window.intview.grid_widget.bands is not None
+    assert window.intview.grid_widget.bands.low_width == 52
 
 
 def test_float_view_is_read_only(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -103,7 +104,7 @@ def test_float_view_is_read_only(qtbot, window: MainWindow) -> None:  # type: ig
     _submit(qtbot, window, "2.5")
     assert window.intview.float_mode is not None
     grid = window.intview.grid_widget
-    assert grid.float_fields == (8, 23)  # float32: default word size
+    assert grid.bands is not None and grid.bands.low_width == 23  # float32: default word size
     # Toggling/selecting is disabled in float mode; scratch keeps the last int.
     assert window.intview.scratch == 0xFF
 
@@ -226,19 +227,68 @@ def test_preview_error_underlines_span(qtbot, window: MainWindow) -> None:  # ty
     assert window.highlighter.error_span is None
 
 
-def test_viz_panel_shows_for_fix_and_hides_for_plain_ints(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    from radix.engine.viz import FixedPointViz
-
+def test_fix_renders_in_the_register_frame(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "fix(0.7071, 1, 15)")
-    assert window.vizpanel.isVisibleTo(window)
-    assert isinstance(window.vizpanel.payload, FixedPointViz)
-    assert window.vizpanel.payload.raw == 0x5A82
+    assert not window.vizpanel.isVisibleTo(window)  # no second bit bar in TRACE
+    intview = window.intview
+    assert intview.fixed_view is not None and intview.fixed_view.raw == 0x5A82
+    grid = intview.grid_widget
+    assert grid.word_size == 16  # the Q word, not the session word size
+    assert grid.bands is not None
+    assert grid.bands.low_width == 15 and grid.bands.point_bit == 14
+    assert intview.rows["HEX"][1].text() == "0x5A82"
+    assert intview.rows["Q1.15"][1].text().startswith("0.7071 → 0.70709")
+    assert intview.register_caption.text() == "REGISTER · Q1.15"
+    assert intview.error_meter.isVisibleTo(intview)
     _submit(qtbot, window, "1 + 1")
-    assert not window.vizpanel.isVisibleTo(window)
-    # The live preview drives it too.
+    assert intview.fixed_view is None and intview.active
+    assert intview.register_caption.text() == "REGISTER"
+    assert not intview.error_meter.isVisibleTo(intview)
+    # The live preview drives it too, and unfix() returns a real carrying the
+    # same payload -- it has to reach REGISTER by the same route.
     window.input.setText("unfix(0x4000, 1, 15)")
     window._update_preview()
-    assert window.vizpanel.isVisibleTo(window)
+    assert window.intview.fixed_view is not None
+    assert window.intview.rows["Q1.15"][1].text() == "0.5  (exact)"
+
+
+def test_fixed_view_is_read_only_and_survives_a_word_size_cycle(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "0xFF")
+    _submit(qtbot, window, "fix(1.5, 8, 4)")
+    intview = window.intview
+    assert not intview.active and intview.scratch == 0xFF  # scratch untouched
+    assert intview.start_cursor() is False
+    grid = intview.grid_widget
+    grid.mousePressEvent(_press(grid._cell_rect(4).center()))
+    grid.mouseReleaseEvent(_press(grid._cell_rect(4).center()))
+    assert intview.scratch == 0xFF  # cells refuse edits in a packed layout
+    window._cycle_word_size()
+    assert intview.fixed_view is not None and grid.word_size == 12
+
+
+def test_bit_grid_geometry_unchanged_for_standard_word_sizes(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Nibble gaps are now derived per row rather than from the column index, so
+    # every session word size has to land exactly where it did before.
+    from radix.ui_qt.bit_panel import CELL, GAP, NIBBLE_GAP
+
+    grid = window.intview.grid_widget
+    for word_size in (8, 16, 32, 64):
+        grid.set_state(0, word_size, True)
+        per_row = grid._bits_per_row()
+        for bit in range(word_size):
+            row, col = divmod(word_size - 1 - bit, per_row)
+            assert grid._cell_rect(bit).left() == 4 + col * (CELL + GAP) + col // 4 * NIBBLE_GAP
+
+
+def test_fixed_view_handles_an_odd_width(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.ui_qt.bit_panel import CELL
+
+    _submit(qtbot, window, "fix(0.1, 2, 3)")
+    grid = window.intview.grid_widget
+    assert grid.word_size == 5
+    # The leading partial group must still get its own cell column and gap.
+    assert grid._cell_rect(4).left() < grid._cell_rect(3).left() - CELL
+    assert window.intview.rows["HEX"][1].text() == "0x01"
 
 
 def test_only_result_readout_has_sunken_background(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -281,17 +331,26 @@ def test_zone_captions_have_expected_text(qtbot, window: MainWindow) -> None:  #
 
 
 def test_trace_caption_visibility_tracks_vizpanel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    from radix.engine.viz import FixedPointViz
+    from radix.engine.viz import ClockViz
 
-    _submit(qtbot, window, "fix(0.7071, 1, 15)")
+    _submit(qtbot, window, "clkdiv(50M, 115200)")
     assert window.inspector.trace_caption.isVisibleTo(window)
-    assert isinstance(window.vizpanel.payload, FixedPointViz)
+    assert isinstance(window.vizpanel.payload, ClockViz)
     _submit(qtbot, window, "1 + 1")
     assert not window.inspector.trace_caption.isVisibleTo(window)
     # The live preview drives it too.
-    window.input.setText("unfix(0x4000, 1, 15)")
+    window.input.setText("mem(3000, 8)")
     window._update_preview()
     assert window.inspector.trace_caption.isVisibleTo(window)
+
+
+def test_trace_stays_hidden_for_bit_layout_payloads(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Qm.n and IEEE-754 describe a word: REGISTER renders them, TRACE stays out
+    # of it rather than drawing the same bits a second time.
+    for expr in ("fix(0.7071, 1, 15)", "unfix(0x4000, 1, 15)", "float32(1.5)"):
+        _submit(qtbot, window, expr)
+        assert not window.inspector.trace_caption.isVisibleTo(window), expr
+        assert not window.vizpanel.isVisibleTo(window), expr
 
 
 def test_trace_caption_hidden_on_launch(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -339,18 +398,42 @@ def test_viz_panel_mem_card(qtbot, window: MainWindow) -> None:  # type: ignore[
     assert payload.addressable == 4096
 
 
-def test_viz_panel_float_card(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    from radix.engine.viz import FloatBitsViz
-    from radix.ui_qt.viz_panel import BAR_H, LINE_H
-
+def test_float32_renders_in_the_register_frame(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "float32(1.5)")
-    assert window.vizpanel.isVisibleTo(window)
-    payload = window.vizpanel.payload
-    assert isinstance(payload, FloatBitsViz)
-    assert payload.bits == 0x3FC00000
-    assert window.vizpanel.height() == 8 + LINE_H + BAR_H + LINE_H + 10
-    assert window.intview.active  # the integer result drives the bit grid
-    assert window.intview.rows["HEX"][1].text().endswith("3FC0_0000")
+    assert not window.vizpanel.isVisibleTo(window)
+    intview = window.intview
+    assert intview.float_bits is not None and intview.float_bits.bits == 0x3FC00000
+    assert not intview.active  # a packed pattern is read-only, like the FLOAT ON view
+    assert intview.rows["HEX"][1].text() == "0x3FC0_0000"
+    assert intview.rows["VAL"][1].text() == "1.5"
+    assert intview.rows["EXP"][1].text() == "127 - bias 127 = 2^0"
+    assert intview.register_caption.text() == "REGISTER · float32"
+    grid = intview.grid_widget
+    assert grid.word_size == 32 and grid.bands is not None and grid.bands.low_width == 23
+    assert not intview.error_meter.isVisibleTo(intview)  # no quantization error here
+    _submit(qtbot, window, "float32(1.1)")
+    assert "rounded from 1.1" in intview.rows["VAL"][1].text()
+    # FLOAT ON/OFF is a display preference; a float32() result is not.
+    window._toggle_float_view()
+    assert intview.float_bits is not None
+    assert intview.register_caption.text() == "REGISTER · float32"
+
+
+def test_unfloat32_uses_the_payload_width_not_the_word_size(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    window.session.word_size = 64
+    _submit(qtbot, window, "unfloat32(0x3FC00000)")
+    assert window.intview.grid_widget.word_size == 32
+    assert window.intview.rows["VAL"][1].text() == "1.5"
+
+
+def _press(pos):  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QMouseEvent
+
+    return QMouseEvent(
+        QEvent.Type.MouseButtonPress, pos, pos, pos,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
 
 
 def _move(widget, pos):  # type: ignore[no-untyped-def]
@@ -363,33 +446,27 @@ def _move(widget, pos):  # type: ignore[no-untyped-def]
     ))
 
 
-def test_viz_panel_fixed_bit_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+def test_fixed_bit_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import QPointF
+
     _submit(qtbot, window, "fix(0.7071, 1, 15)")
-    panel = window.vizpanel
-    payload = panel.payload
-    total = payload.m + payload.n
-    cell, y = panel._fixed_geometry(total)
-    from PySide6.QtCore import QPointF
-
-    # Sign bit is the first cell drawn (i = 0, bit = total - 1).
-    pos = QPointF(12 + cell / 2, y + cell / 2)
-    _move(panel, pos)
-    assert "sign" in panel.toolTip()
-    # Moving off the bit bar clears the tooltip.
-    _move(panel, QPointF(1, 1))
-    assert panel.toolTip() == ""
+    grid = window.intview.grid_widget
+    _move(grid, grid._cell_rect(15).center())  # MSB: the two's-complement sign
+    assert "sign" in grid.toolTip() and "weight -2^0" in grid.toolTip()
+    _move(grid, grid._cell_rect(0).center())
+    assert "fraction" in grid.toolTip() and "weight 2^-15" in grid.toolTip()
+    # Moving off the cells clears the tooltip.
+    _move(grid, QPointF(1, 1))
+    assert grid.toolTip() == ""
 
 
-def test_viz_panel_float_bit_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    from PySide6.QtCore import QPointF
-
+def test_float_bit_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "float32(1.5)")
-    panel = window.vizpanel
-    payload = panel.payload
-    cell, y = panel._floatbits_geometry(payload.width)
-    x = 12  # i=0 -> bit = width-1 (sign), no shift
-    _move(panel, QPointF(x + cell / 2, y + cell / 2))
-    assert panel.toolTip() == "bit 31 = 0   sign"
+    grid = window.intview.grid_widget
+    _move(grid, grid._cell_rect(31).center())
+    assert grid.toolTip() == "bit 31 = 0    sign"
+    _move(grid, grid._cell_rect(0).center())
+    assert grid.toolTip() == "bit 0 = 0    mantissa"
 
 
 def test_viz_panel_clock_wave_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

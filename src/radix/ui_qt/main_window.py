@@ -39,6 +39,7 @@ from radix import __version__
 from radix.engine.errors import CalcError, IncompleteError
 from radix.engine.help import general_help_html
 from radix.engine.values import Value
+from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz
 from radix.history.store import HistoryStore, StoredEntry
 from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Session
 from radix.ui_qt.completer import Completer
@@ -611,12 +612,27 @@ class MainWindow(QMainWindow):
     def _panel_follow(self, value: Value | None) -> None:
         """Point the integer panel at a previewed/committed value.
 
-        Integers drive the editable bit grid; reals show the read-only
-        IEEE-754 view (word size 32/64) or grey the panel (8/16).
+        A packed layout (Qm.n, IEEE-754) takes the panel over read-only,
+        whichever way round its function returned it — fix() yields the raw
+        integer, unfix() the real, and both describe the same word. Otherwise
+        integers drive the editable bit grid, and reals show the FLOAT ON view
+        (word size 32/64) or grey the panel (8/16).
         """
-        self.inspector.show_viz_payload(value.viz if value is not None else None)
+        viz = value.viz if value is not None else None
+        # TRACE is now only the card-shaped payloads; bit layouts live in REGISTER.
+        self.inspector.show_viz_payload(viz if isinstance(viz, (ClockViz, MemViz)) else None)
         number = value.number if value is not None else None
         self.channels.set_live(number if isinstance(number, int) else None)
+        if isinstance(viz, FixedPointViz):
+            self.intview.show_value(
+                None, self.session.word_size, self.session.signed, fixed_view=viz
+            )
+            return
+        if isinstance(viz, FloatBitsViz):
+            self.intview.show_value(
+                None, self.session.word_size, self.session.signed, float_bits=viz
+            )
+            return
         if isinstance(number, int):
             assert value is not None
             self.intview.show_value(
@@ -922,11 +938,17 @@ class MainWindow(QMainWindow):
             self._refresh_vars_pane()  # values honor the new base/notation
         if self.store is not None:
             save_session(self.session)
-        # Re-render the current panel value under the new settings; never re-evaluate.
+        # Re-render the current panel value under the new settings; never
+        # re-evaluate. The packed layouts have to be carried through: they are
+        # function results, not display preferences, so a word-size cycle (or
+        # Alt+F) must not drop the Qm.n / float32 view showing right now.
         self.intview.show_value(
             self.intview.scratch if self.intview.active else None,
             self.session.word_size,
             self.session.signed,
+            float_views=self.intview.float_mode,
+            fixed_view=self.intview.fixed_view,
+            float_bits=self.intview.float_bits,
             csr=self.intview.csr,
         )
         self._update_preview()

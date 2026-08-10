@@ -1,7 +1,9 @@
 """The inspector: live visualization card stacked over the register view.
 
 Always-visible read-only state, as distinct from the history/help/vars pane
-stack the user is actively navigating.
+stack the user is actively navigating. TRACE carries only the card-shaped
+payloads (clock, memory); Qm.n and IEEE-754 layouts describe a word and so
+render in REGISTER, inside `IntegerView`.
 """
 
 from __future__ import annotations
@@ -10,11 +12,10 @@ from collections.abc import Callable
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from radix.engine.viz import VizPayload
 from radix.ui_qt.bit_panel import IntegerView
 from radix.ui_qt.channels import ChannelsRack
 from radix.ui_qt.theme import Palette
-from radix.ui_qt.viz_panel import CARD_PAD, VizPanel
+from radix.ui_qt.viz_panel import CARD_PAD, CardPayload, VizPanel
 from radix.ui_qt.zones import ZoneCaption, margin_wrap
 
 
@@ -41,7 +42,7 @@ class Inspector(QWidget):
         layout.addWidget(self.channels)
         layout.addStretch(1)
 
-    def show_viz_payload(self, payload: VizPayload | None) -> None:
+    def show_viz_payload(self, payload: CardPayload | None) -> None:
         self.vizpanel.show_payload(payload)
         self.trace_caption.setVisible(payload is not None)
 
