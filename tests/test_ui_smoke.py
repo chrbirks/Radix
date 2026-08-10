@@ -756,23 +756,12 @@ def test_bit_toggle_marks_single_changed_bit(qtbot, window: MainWindow) -> None:
     assert window.intview.delta_label.text() == "Δ +1 -0"
 
 
-def test_ascii_row(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    _submit(qtbot, window, "0x746F6B31")
-    assert window.intview.rows["ASC"][1].text() == "tok1"  # exactly 4 bytes at 32-bit
-    _submit(qtbot, window, "0xFFFF")  # no printable byte: lane hidden
-    assert "ASC" not in window.intview.rows
-
-
 def test_bin_lane_highlights_set_bits_but_copies_plain(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     window.session.word_size = 8
     _submit(qtbot, window, "0b1010")
     bin_text = window.intview.rows["BIN"][1].text()
     assert "<span" in bin_text  # set bits colored, but...
     assert window.intview._copy_texts["BIN"] == "0b0000_1010"  # ...copy is plain text
-    _submit(qtbot, window, "0xFFFF")
-    assert "ASC" not in window.intview.rows
-    _submit(qtbot, window, "0x746F6B31")
-    assert "ASC" in window.intview.rows
 
 
 def test_dec_lane_shows_signed_when_differs(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

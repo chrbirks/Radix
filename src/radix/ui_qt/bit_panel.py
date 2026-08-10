@@ -35,7 +35,7 @@ FIELD_H = 20  # field-band strip above the hex strip, present only with a csr
 FIELD_LABEL_GAP = 4  # breathing room between the field name and its bracket line
 ROW_H = HEX_H + CELL + GAP + INDEX_H
 BYTE_WIDTH = 8 * (CELL + GAP) + 2 * NIBBLE_GAP  # one byte group incl. nibble gaps
-LANE_ROWS = 4  # max simultaneous lanes (HEX/DEC/BIN/ASC, or HEX/SGN/EXP/MAN)
+LANE_ROWS = 4  # max simultaneous lanes (HEX/DEC/BIN, or HEX/SGN/EXP/MAN)
 TOP_MARGIN = 8  # above the first row, so tall hex-digit labels don't clip the widget edge
 BOTTOM_MARGIN = 4
 
@@ -611,7 +611,6 @@ class IntegerView(QWidget):
             "HEX": views.hex,
             "DEC": views.dec_unsigned,
             "BIN": views.binary,
-            "ASC": views.ascii,
         }
         placeholder = "—"
         # Set bits rendered in the same phosphor/trace color as the bit grid's
@@ -628,8 +627,6 @@ class IntegerView(QWidget):
             ("DEC", dec_text if self.active else placeholder),
             ("BIN", bin_text if self.active else placeholder),
         ]
-        if any(ch != "." for ch in views.ascii):
-            lanes.append(("ASC", views.ascii if self.active else placeholder))
         self._set_lanes(lanes, dimmed=not self.active)
         mask = (1 << self.word_size) - 1
         changed = self.changed & mask if self.active else 0

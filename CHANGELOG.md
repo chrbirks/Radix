@@ -9,6 +9,13 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Removed
+
+- The ASC lane in the READOUT frame, which rendered the result's bytes as ASCII
+  characters. It was noise on numeric results, and because it only appeared when
+  some byte happened to be printable, the READOUT frame changed height from one
+  result to the next. Integer results now always read HEX / DEC / BIN.
+
 ### Fixed
 
 - Once the history filled the pane and the scrollbar appeared, the newest entry

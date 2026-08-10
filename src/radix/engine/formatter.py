@@ -41,7 +41,6 @@ class IntegerViews:
     dec_unsigned: str
     dec_signed: str
     binary: str
-    ascii: str  # one char per byte, MSB first; "." for non-printable bytes
     # Every view above is masked to `word_size`, so a value too wide for the
     # word renders as its low bits and nothing in the text says so. These two
     # let the display flag that, instead of presenting a masked pattern as if
@@ -192,10 +191,6 @@ def integer_views(value: int, word_size: int) -> IntegerViews:
         dec_unsigned=str(wrapped),
         dec_signed=str(signed_value),
         binary=_group(f"{wrapped:b}", 4, min_width=word_size, prefix="0b"),
-        ascii="".join(
-            chr(b) if 32 <= b < 127 else "."
-            for b in wrapped.to_bytes(word_size // 8, "big")
-        ),
         value_bits=width,
         truncated=width > word_size,
     )

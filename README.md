@@ -9,7 +9,7 @@ Python and PySide6. Runs on Windows and Linux.
 
 Everything is typed into one input field — no button grids. One unified,
 modeless grammar: `**` is always power, `^` is always XOR, and any integer
-result automatically shows hex, decimal, binary, ASCII bytes, and a clickable
+result automatically shows hex, decimal, binary, and a clickable
 bit panel — toggling a bit writes the edited value straight back into the
 input line, dragging across cells selects a bit range and reads out that
 field (`[15:8] = 0xBE = 190`), and bits that changed since the previous value
