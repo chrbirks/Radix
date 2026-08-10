@@ -9,6 +9,8 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+## [9] - 2026-08-10
+
 ### Changed
 
 - `fix()`/`unfix()` and `float32()`/`float64()` (and their inverses) now render
