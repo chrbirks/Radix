@@ -9,6 +9,8 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+## [10] - 2026-08-11
+
 ### Added
 
 - Decimal-separator setting with two modes, toggled with **Alt+Shift+D** (or the
