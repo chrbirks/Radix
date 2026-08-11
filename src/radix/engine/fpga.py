@@ -42,6 +42,15 @@ def _word_mask(ctx: EvalContext) -> int:
     return (1 << ctx.word_size) - 1
 
 
+def _loc(text: str, ctx: EvalContext) -> str:
+    """Localize a pure-number string's decimal point to the session separator.
+
+    Only for strings that are entirely a number (``mpmath.nstr`` output); never
+    for text where ``.`` means something else, e.g. the ``Q3.5`` format tag.
+    """
+    return text if ctx.decimal == "." else text.replace(".", ctx.decimal)
+
+
 # -- bit utilities -------------------------------------------------------------
 
 
@@ -148,13 +157,19 @@ def _reciprocal(args: list[Number], what: str) -> mpmath.mpf:
 
 def _period(args: list[Number], ctx: EvalContext) -> Value:
     t = _reciprocal(args, "period")
-    viz = ClockViz(freq_text=format_si(mpmath.mpf(args[0])), period_text=format_si(t))
+    d = ctx.decimal
+    viz = ClockViz(
+        freq_text=format_si(mpmath.mpf(args[0]), d), period_text=format_si(t, d)
+    )
     return Value(t, prefer_si=True, viz=viz)
 
 
 def _freq(args: list[Number], ctx: EvalContext) -> Value:
     f = _reciprocal(args, "freq")
-    viz = ClockViz(freq_text=format_si(f), period_text=format_si(mpmath.mpf(args[0])))
+    d = ctx.decimal
+    viz = ClockViz(
+        freq_text=format_si(f, d), period_text=format_si(mpmath.mpf(args[0]), d)
+    )
     return Value(f, prefer_si=True, viz=viz)
 
 
@@ -164,11 +179,14 @@ def _clkdiv(args: list[Number], ctx: EvalContext) -> Value:
     f_target = mpmath.mpf(args[1])
     if f_clk <= 0 or f_target <= 0:
         raise FunctionDomainError("clkdiv: frequencies must be positive")
+    d = ctx.decimal
     divisor = max(1, int(mpmath.nint(f_clk / f_target)))
     achieved = f_clk / divisor
     ppm = float((achieved - f_target) / f_target * 1_000_000)
     # Past 1%, percent reads better than ppm.
-    error_text = f"{ppm / 10_000:+.2f}%" if abs(ppm) >= 10_000 else f"{ppm:+.0f} ppm"
+    error_text = _loc(
+        f"{ppm / 10_000:+.2f}%" if abs(ppm) >= 10_000 else f"{ppm:+.0f} ppm", ctx
+    )
     # Divided-output shape in ref half-cycles: a /1 "divider" passes the clock
     # through; otherwise a single-edge counter stays high ceil(N/2) ref cycles,
     # so odd dividers get the classic asymmetric duty.
@@ -177,31 +195,31 @@ def _clkdiv(args: list[Number], ctx: EvalContext) -> Value:
     else:
         wave_high, wave_low = 2 * ((divisor + 1) // 2), 2 * (divisor // 2)
     viz = ClockViz(
-        freq_text=format_si(f_clk),
-        period_text=format_si(1 / f_clk),
+        freq_text=format_si(f_clk, d),
+        period_text=format_si(1 / f_clk, d),
         divisor=divisor,
-        target_text=format_si(f_target),
-        achieved_text=format_si(achieved),
+        target_text=format_si(f_target, d),
+        achieved_text=format_si(achieved, d),
         error_text=error_text,
         error_ppm=ppm,
         wave_high=wave_high,
         wave_low=wave_low,
-        duty_text=f"{100 * wave_high / (wave_high + wave_low):.3g}%",
+        duty_text=_loc(f"{100 * wave_high / (wave_high + wave_low):.3g}%", ctx),
     )
-    note = f"actual {format_si(achieved)}, error {error_text}"
+    note = f"actual {format_si(achieved, d)}, error {error_text}"
     return Value(divisor, note=note, viz=viz)
 
 
 # -- memory sizing ---------------------------------------------------------------
 
 
-def _binary_size(bits: int) -> str:
+def _binary_size(bits: int, decimal: str = ".") -> str:
     size = bits / 8
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if size < 1024:
-            return f"{size:.4g} {unit}"
+            return f"{size:.4g} {unit}".replace(".", decimal)
         size /= 1024
-    return f"{size:.4g} PiB"
+    return f"{size:.4g} PiB".replace(".", decimal)
 
 
 def _mem(args: list[Number], ctx: EvalContext) -> Value:
@@ -222,7 +240,7 @@ def _mem(args: list[Number], ctx: EvalContext) -> Value:
         addr_bits=addr_bits,
         addressable=addressable,
         total_bits=total_bits,
-        bytes_text=_binary_size(total_bits),
+        bytes_text=_binary_size(total_bits, ctx.decimal),
         utilization=utilization,
         util_text=f"{utilization * 100:.0f}%",
     )
@@ -263,22 +281,32 @@ def _fixed_viz(
     stored_text: str,
     error_text: str,
     error_lsb: float,
+    decimal: str = ".",
 ) -> FixedPointViz:
-    """Build the payload, deriving every pre-formatted field the UI only draws."""
+    """Build the payload, deriving every pre-formatted field the UI only draws.
+
+    ``exact_text``/``stored_text``/``error_text`` arrive as ``.``-decimal number
+    strings; they are localized here alongside the derived ``error_lsb_text``.
+    """
     total = m + n
     signed = raw - (1 << total) if raw >> (total - 1) else raw
+
+    def loc(s: str) -> str:
+        return s if decimal == "." else s.replace(".", decimal)
+
+    lsb_text = "0 LSB" if error_lsb == 0 else loc(f"{error_lsb:.2f} LSB")
     return FixedPointViz(
         m=m,
         n=n,
         raw=raw,
-        exact_text=exact_text,
-        stored_text=stored_text,
-        error_text=error_text,
+        exact_text=loc(exact_text),
+        stored_text=loc(stored_text),
+        error_text=loc(error_text),
         error_lsb=error_lsb,
         hex_text=group_digits(f"{raw:X}", 4, min_width=-(-total // 4), prefix="0x"),
         dec_text=str(raw),
         dec_signed_text=str(signed),
-        error_lsb_text="0 LSB" if error_lsb == 0 else f"{error_lsb:.2f} LSB",
+        error_lsb_text=lsb_text,
         bit_weights=_q_bit_weights(m, n),
     )
 
@@ -296,7 +324,8 @@ def _fix(args: list[Number], ctx: EvalContext) -> Value:
     raw = scaled & ((1 << total) - 1)
     quantized = mpmath.mpf(scaled) / (1 << n)
     err = x - quantized
-    note = f"Q{m}.{n}, quantization error = {mpmath.nstr(err, 3)}"
+    # `Q{m}.{n}` is a format tag, not a number: localize only the error value.
+    note = f"Q{m}.{n}, quantization error = {_loc(mpmath.nstr(err, 3), ctx)}"
     viz = _fixed_viz(
         m,
         n,
@@ -305,6 +334,7 @@ def _fix(args: list[Number], ctx: EvalContext) -> Value:
         stored_text=mpmath.nstr(quantized, 8),
         error_text=mpmath.nstr(err, 3),
         error_lsb=float(abs(err) * (1 << n)),
+        decimal=ctx.decimal,
     )
     return Value(raw, declared_width=total, note=note, viz=viz)
 
@@ -325,6 +355,7 @@ def _unfix(args: list[Number], ctx: EvalContext) -> Value:
         stored_text=text,  # decoding is exact: no quantization step
         error_text="0",
         error_lsb=0.0,
+        decimal=ctx.decimal,
     )
     return Value(real, note=f"from Q{m}.{n}", viz=viz)
 
@@ -339,21 +370,21 @@ def _float_pack(width: int) -> Handler:
         name = f"float{width}"
         x = mpmath.mpf(args[0])
         try:
-            fv = float_views(x, width)
+            fv = float_views(x, width, ctx.decimal)
         except OverflowError:
             raise FunctionDomainError(f"{name}: value does not fit the format") from None
         assert fv is not None  # width is always 32 or 64
         stored = struct.unpack(fmt, fv.bits.to_bytes(width // 8, "big"))[0]
         if math.isinf(stored):  # finite input packed to inf: out of range
             raise FunctionDomainError(f"{name}: value does not fit the format")
-        stored_text = mpmath.nstr(mpmath.mpf(stored), 9)
+        stored_text = _loc(mpmath.nstr(mpmath.mpf(stored), 9), ctx)
         viz = FloatBitsViz(
             width=width,
             exp_width=fv.exp_width,
             man_width=fv.man_width,
             bits=fv.bits,
             hex_text=fv.hex,
-            exact_text=mpmath.nstr(x, 9),
+            exact_text=_loc(mpmath.nstr(x, 9), ctx),
             stored_text=stored_text,
             rounded=mpmath.mpf(stored) != x,
             sign_text=fv.sign_text,
@@ -376,9 +407,9 @@ def _float_unpack(width: int) -> Handler:
         if math.isinf(decoded) or math.isnan(decoded):
             raise FunctionDomainError(f"{name}: pattern decodes to inf/nan")
         real = mpmath.mpf(decoded)
-        fv = float_views(real, width)
+        fv = float_views(real, width, ctx.decimal)
         assert fv is not None  # width is always 32 or 64
-        text = mpmath.nstr(real, 9)
+        text = _loc(mpmath.nstr(real, 9), ctx)
         viz = FloatBitsViz(
             width=width,
             exp_width=fv.exp_width,

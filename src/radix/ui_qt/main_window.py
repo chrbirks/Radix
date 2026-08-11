@@ -80,6 +80,7 @@ MODE_CHIPS: tuple[tuple[str, str, str], ...] = (
     ("base", "Alt+Shift+B", "integer result base for history & preview"),
     ("notation", "Alt+N", "result notation"),
     ("float", "Alt+Shift+F", "IEEE-754 breakdown for real results"),
+    ("decimal", "Alt+Shift+D", "decimal separator (comma , vs period .)"),
 )
 
 
@@ -133,6 +134,7 @@ SHORTCUT_HELP = """Keyboard shortcuts
   Alt+G        bit cursor in the register grid (arrows/shift+arrows/space)
   Alt+I        show/hide inspector panel
   Alt+M        cycle theme (auto/light/dark)
+  Alt+Shift+D  decimal separator (comma / period)
 
   Line editing (input field)
   Ctrl+B/F     move char back/fwd  Alt+B/F      move word back/fwd
@@ -281,7 +283,9 @@ class MainWindow(QMainWindow):
         # resize while reviewing older entries doesn't yank the view down.
         self.history_view.installEventFilter(self)
         self.history_view.viewport().installEventFilter(self)
-        self.highlighter = ExprHighlighter(self.input.document(), palette)
+        self.highlighter = ExprHighlighter(
+            self.input.document(), palette, session.decimal_syntax
+        )
         self.completer = Completer(self.input, session, palette)
 
         self.inspector = Inspector(palette, lambda text: QApplication.clipboard().setText(text))
@@ -380,6 +384,7 @@ class MainWindow(QMainWindow):
             "base": self._cycle_int_base,
             "notation": self._cycle_notation,
             "float": self._toggle_float_view,
+            "decimal": self._toggle_decimal_mode,
         }
 
     @staticmethod
@@ -398,6 +403,7 @@ class MainWindow(QMainWindow):
             "base": [base.upper() for base in INT_BASES],
             "notation": [n.replace("eng_si", "eng·si").upper() for n in NOTATIONS],
             "float": ["FLOAT ON", "FLOAT OFF"],
+            "decimal": ["1,2", "1.2"],
         }[key]
         font = QFont(LABEL_FAMILY)
         font.setPixelSize(FONT_MICRO)
@@ -918,8 +924,16 @@ class MainWindow(QMainWindow):
         self.session.show_float_view = not self.session.show_float_view
         self._after_setting_change()
 
+    def _toggle_decimal_mode(self) -> None:
+        self.session.cycle_decimal_mode()
+        self._after_setting_change()
+
     def _after_setting_change(self) -> None:
         self._refresh_status()
+        # Re-tokenize the input under the (possibly new) decimal/arg grammar so
+        # `3,14` colors as one number and `;` no longer trips a lex-error
+        # underline. No-op unless the decimal mode actually changed.
+        self.highlighter.set_syntax(self.session.decimal_syntax)
         self._reformat_history()
         self._refresh_result_label()
         self.channels.refresh(self.session.format_value, self.session.word_size)
@@ -963,6 +977,7 @@ class MainWindow(QMainWindow):
             "base": session.int_base.upper(),
             "notation": session.notation.replace("eng_si", "eng·si").upper(),
             "float": "FLOAT ON" if session.show_float_view else "FLOAT OFF",
+            "decimal": "1,2" if session.decimal_mode == "comma" else "1.2",
         }
         tips = {
             key: f"{description} — click or {shortcut}"
@@ -1076,7 +1091,8 @@ class MainWindow(QMainWindow):
         self._help_overview_shown = text is None
         if text is None:
             self._style_help_pane(self.palette_tokens)
-            self.help_pane.setHtml(general_help_html(SHORTCUT_HELP))
+            arg_sep = self.session.decimal_syntax.arg_sep + " "
+            self.help_pane.setHtml(general_help_html(SHORTCUT_HELP, arg_sep))
         else:
             self.help_pane.setPlainText(text)
         self.help_pane.verticalScrollBar().setValue(0)  # always open at the top

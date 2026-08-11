@@ -9,6 +9,18 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Added
+
+- Decimal-separator setting with two modes, toggled with **Alt+Shift+D** (or the
+  new `1,2`/`1.2` status chip). In **comma** mode — the shipped default — the
+  decimal point is `,`, functions separate arguments with `;` (`clkdiv(50M;
+  115200)`), and results, notes, and the fixed-point/clock/float visualizations
+  all render with a comma (`3,14 * 2` → `6,28`). `.` is still accepted as a
+  decimal on input, so both separators type in the same. **period** mode is the
+  classic `.`/`,` grammar. The choice persists across restarts. One grammar per
+  mode — no per-expression modes; operator meanings (`**`, `^`, `>>`) are
+  unchanged.
+
 ## [9] - 2026-08-10
 
 ### Changed

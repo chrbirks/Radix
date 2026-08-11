@@ -46,7 +46,8 @@ def test_evaluate_omits_truncation_note_when_the_value_fits(
 
 
 def test_evaluate_decodes_register_fields(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["-e", "csr(0xF3, MODE[7:4] CMD[3:0])"]) == 0
+    # The CLI ships in comma mode, so arguments separate with ';'.
+    assert main(["-e", "csr(0xF3; MODE[7:4] CMD[3:0])"]) == 0
     out = capsys.readouterr().out
     assert out.startswith("243")  # 0xF3 decimal
     assert "MODE=0b1111" in out
@@ -81,9 +82,10 @@ def test_lex_error_uses_the_same_stderr_shape(
 
 
 def test_float_result_prints_bare(capsys: pytest.CaptureFixture[str]) -> None:
-    # No parenthesized hex/dec/bin views for non-integer results.
+    # No parenthesized hex/dec/bin views for non-integer results. The CLI ships
+    # in comma mode, so the decimal point renders as a comma.
     assert main(["-e", "1/3"]) == 0
-    assert capsys.readouterr().out == "0.333333333333\n"
+    assert capsys.readouterr().out == "0,333333333333\n"
 
 
 def test_si_preference_reaches_the_cli(capsys: pytest.CaptureFixture[str]) -> None:
@@ -92,10 +94,11 @@ def test_si_preference_reaches_the_cli(capsys: pytest.CaptureFixture[str]) -> No
 
 
 def test_note_prints_in_brackets(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["-e", "clkdiv(50M, 115200)"]) == 0
+    # Comma-mode CLI: ';' separates arguments and the note localizes its decimal.
+    assert main(["-e", "clkdiv(50M; 115200)"]) == 0
     out = capsys.readouterr().out
     assert out.startswith("434")
-    assert "[actual 115.207373272k, error +64 ppm]" in out
+    assert "[actual 115,207373272k, error +64 ppm]" in out
 
 
 def test_subprocess_end_to_end() -> None:

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextDocument
 
+from radix.engine import numsyntax
 from radix.engine.functions import CONSTANTS, FUNCTIONS
 from radix.engine.lexer import tokenize_prefix
+from radix.engine.numsyntax import NumSyntax
 from radix.ui_qt.theme import Palette
 
 PARENS = {"(", ")", "[", "]"}
@@ -19,14 +21,14 @@ PARENS = {"(", ")", "[", "]"}
 Segment = tuple[int, int, str]  # start, length, kind
 
 
-def classify(text: str) -> list[Segment]:
+def classify(text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> list[Segment]:
     """Token segments as (start, length, kind); gaps are left uncolored.
 
     Kinds: "number", "function", "constant", "operator", "paren", "ident".
     On a lex error the valid prefix is still classified; the rest stays plain.
     """
     segments: list[Segment] = []
-    for token in tokenize_prefix(text):
+    for token in tokenize_prefix(text, syntax):
         if token.kind == "NUMBER":
             kind = "number"
         elif token.kind == "IDENT":
@@ -59,13 +61,30 @@ def color_for(kind: str, palette: Palette) -> QColor:
 
 
 class ExprHighlighter(QSyntaxHighlighter):
-    def __init__(self, document: QTextDocument, palette: Palette) -> None:
+    def __init__(
+        self,
+        document: QTextDocument,
+        palette: Palette,
+        syntax: NumSyntax = numsyntax.DEFAULT,
+    ) -> None:
         super().__init__(document)
         self.palette_tokens = palette
+        self.syntax = syntax
         self.error_span: tuple[int, int] | None = None
 
     def set_palette(self, palette: Palette) -> None:
         self.palette_tokens = palette
+        self.rehighlight()
+
+    def set_syntax(self, syntax: NumSyntax) -> None:
+        """Re-tokenize under a new decimal/argument grammar; no-op if unchanged.
+
+        The guard mirrors set_error_span: rehighlight() fires textChanged, so a
+        blind rehighlight on every setting change would loop through the preview.
+        """
+        if syntax == self.syntax:
+            return
+        self.syntax = syntax
         self.rehighlight()
 
     def set_error_span(self, span: tuple[int, int] | None) -> None:
@@ -80,7 +99,7 @@ class ExprHighlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:
-        for start, length, kind in classify(text):
+        for start, length, kind in classify(text, self.syntax):
             fmt = QTextCharFormat()
             fmt.setForeground(color_for(kind, self.palette_tokens))
             self.setFormat(start, length, fmt)

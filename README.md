@@ -124,6 +124,11 @@ immediately — existing history entries re-render in place:
 - **Notation** (AUTO/SCI/ENG/ENG·SI, Alt+N): applies to floats *and*
   integers — `10000000` shows as `1e+7` (SCI), `10e+6` (ENG), or `10M`
   (ENG·SI). AUTO keeps integers exact; the hex/bin base wins over notation.
+- **Decimal separator** (`1,2`/`1.2`, Alt+Shift+D): switches between comma mode
+  (the default: `,` decimal, `;` argument separator, comma on output — `3,14 * 2`
+  → `6,28`, `clkdiv(50M; 115200)`) and period mode (`.` decimal, `,` argument
+  separator). `.` is always accepted as a decimal on input regardless of mode.
+  Results, notes, and every visualization follow the chosen separator.
 - **Word size / signedness** (Alt+W / Alt+S): reinterprets the integer panel
   and bit grid without re-evaluating anything. At 32/64-bit word sizes, float
   results render as IEEE-754 single/double bit layouts with decoded
@@ -135,8 +140,8 @@ immediately — existing history entries re-render in place:
 Right-click a history entry to copy its result or expression, copy the value
 as hex/dec/bin, recall it, or delete it.
 
-All settings — word size, signedness, deg/rad, notation, result base,
-always-on-top, window geometry — persist across restarts in a plain INI file
+All settings — word size, signedness, deg/rad, notation, result base, decimal
+separator, always-on-top, window geometry — persist across restarts in a plain INI file
 (`%APPDATA%\radix` on Windows, `~/.config/radix` on Linux). Variables, named
 `csr`s, and `ans` persist there too, and are restored on the next launch.
 
@@ -154,6 +159,7 @@ always-on-top, window geometry — persist across restarts in a plain INI file
 | Alt+W / Alt+S    | word size / signedness                                 |
 | Alt+D / Alt+N    | deg-rad / notation                                     |
 | Alt+Shift+B      | result base (dec/hex/bin)                              |
+| Alt+Shift+D      | decimal separator (comma `,` / period `.`)             |
 | Alt+Shift+F      | show/hide the IEEE-754 float view                      |
 | Alt+V            | variables pane (`del <name>` removes)                  |
 | Alt+P            | pin the last result as a channel                       |

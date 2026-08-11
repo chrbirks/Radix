@@ -63,19 +63,19 @@ Commands   help        this overview            help <name>   one operator/funct
 """
 
 
-def general_help(shortcuts: str | None = None) -> str:
+def general_help(shortcuts: str | None = None, arg_sep: str = ", ") -> str:
     lines = [_BASICS]
     lines.append("Operators (lowest to highest precedence)")
     for op, summary, example in _OPERATOR_HELP:
         lines.append(f"  {op:4} {summary}  e.g. {example}")
     lines.append("")
     lines.append("Functions")
-    width = max(len(spec.signature) for spec in FUNCTIONS.values()) + 3
+    width = max(len(spec.signature_sep(arg_sep)) for spec in FUNCTIONS.values()) + 3
     for category in dict.fromkeys(spec.category for spec in FUNCTIONS.values()):
         lines.append(f"{category}")
         for spec in FUNCTIONS.values():
             if spec.category == category:
-                lines.append(f"  {spec.signature:{width}}{spec.summary}")
+                lines.append(f"  {spec.signature_sep(arg_sep):{width}}{spec.summary}")
         lines.append("")
     lines.append("Constants: " + ", ".join(sorted(CONSTANTS)))
     lines.append('Use help <name> for details, e.g. "help sin" or "help <<".')
@@ -85,7 +85,7 @@ def general_help(shortcuts: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def general_help_html(shortcuts: str | None = None) -> str:
+def general_help_html(shortcuts: str | None = None, arg_sep: str = ", ") -> str:
     """Rich-text variant of general_help() for the GUI pane (same sources)."""
 
     def table(rows: list[tuple[str, str]]) -> str:
@@ -105,7 +105,7 @@ def general_help_html(shortcuts: str | None = None) -> str:
         parts.append(
             table(
                 [
-                    (spec.signature, spec.summary)
+                    (spec.signature_sep(arg_sep), spec.summary)
                     for spec in FUNCTIONS.values()
                     if spec.category == category
                 ]
@@ -118,7 +118,7 @@ def general_help_html(shortcuts: str | None = None) -> str:
     return "\n".join(parts)
 
 
-def topic_help(topic: str) -> str | None:
+def topic_help(topic: str, arg_sep: str = ", ") -> str | None:
     """Help for one function or operator; None if the topic is unknown."""
     if topic in _COMMAND_HELP:
         return _COMMAND_HELP[topic]
@@ -127,7 +127,8 @@ def topic_help(topic: str) -> str | None:
         lo, hi = spec.arity
         arity = str(lo) if lo == hi else f"{lo}–{hi}"
         return (
-            f"{spec.signature} — {spec.summary}  ({arity} argument(s))\nExample: {spec.example}"
+            f"{spec.signature_sep(arg_sep)} — {spec.summary}  ({arity} argument(s))"
+            f"\nExample: {spec.example}"
         )
     if topic in CONSTANTS:
         return f"{topic} — {CONSTANTS[topic][1]}"

@@ -33,6 +33,7 @@ from radix.engine.formatter import (
 from radix.engine.functions import CONSTANTS, FUNCTIONS, EvalContext
 from radix.engine.lexer import tokenize
 from radix.engine.nodes import Assign
+from radix.engine.numsyntax import BY_MODE, NumSyntax
 from radix.engine.parser import parse
 from radix.engine.values import (
     Value,
@@ -44,6 +45,7 @@ from radix.engine.values import (
 WORD_SIZES = (8, 16, 32, 64)
 NOTATIONS = ("auto", "sci", "eng", "eng_si")
 INT_BASES = ("dec", "hex", "bin")
+DECIMAL_MODES = ("comma", "period")
 
 RESERVED_NAMES = (
     frozenset({"ans", "help", "clear", "vars", "del", "csr"})
@@ -76,6 +78,10 @@ class Session:
     angle_deg: bool = False
     notation: str = "auto"
     int_base: str = "dec"  # display base for integer results (dec/hex/bin)
+    # "period" (./,) or "comma" (,/;). The dataclass default is period so the
+    # engine golden tables read canonically; the app opts into comma (its
+    # shipped default) at the entry point — see radix.__main__.main.
+    decimal_mode: str = "period"
     show_float_view: bool = False  # IEEE-754 breakdown in READOUT/REGISTER
     variables: dict[str, Value] = field(default_factory=dict)
     csrs: dict[str, Csr] = field(default_factory=dict)
@@ -85,7 +91,15 @@ class Session:
 
     @property
     def context(self) -> EvalContext:
-        return EvalContext(self.word_size, self.signed, self.angle_deg)
+        return EvalContext(self.word_size, self.signed, self.angle_deg, self.decimal_char)
+
+    @property
+    def decimal_syntax(self) -> NumSyntax:
+        return BY_MODE[self.decimal_mode]
+
+    @property
+    def decimal_char(self) -> str:
+        return self.decimal_syntax.decimal
 
     def cycle_word_size(self) -> int:
         i = WORD_SIZES.index(self.word_size)
@@ -102,6 +116,11 @@ class Session:
         self.int_base = INT_BASES[(i + 1) % len(INT_BASES)]
         return self.int_base
 
+    def cycle_decimal_mode(self) -> str:
+        i = DECIMAL_MODES.index(self.decimal_mode)
+        self.decimal_mode = DECIMAL_MODES[(i + 1) % len(DECIMAL_MODES)]
+        return self.decimal_mode
+
     # -- evaluation ------------------------------------------------------------
 
     def evaluate(self, text: str, commit: bool = True) -> Outcome:
@@ -112,8 +131,8 @@ class Session:
         command = self._command(line, commit)
         if command is not None:
             return command
-        node = parse(line)
-        preview = render.render(node, self.variables, self.ans)
+        node = parse(line, self.decimal_syntax)
+        preview = render.render(node, self.variables, self.ans, self.decimal_syntax)
         if isinstance(node, Assign):
             if node.target in RESERVED_NAMES:
                 raise EvalError(
@@ -149,12 +168,13 @@ class Session:
         if word == "help":
             if rest.startswith("="):
                 return None  # `help = ...` is an assignment attempt → reserved-name error
+            arg_sep = self.decimal_syntax.arg_sep + " "
             if rest:
-                text = help_mod.topic_help(rest)
+                text = help_mod.topic_help(rest, arg_sep)
                 if text is None:
                     text = f"no help for {rest!r} — try plain `help` for the overview"
             else:
-                text = help_mod.general_help()
+                text = help_mod.general_help(arg_sep=arg_sep)
             # target carries the topic so the GUI can tell overview from topic.
             return Outcome("help", target=rest or None, help_text=text)
         if word == "clear" and not rest:
@@ -225,7 +245,7 @@ class Session:
         while spec_offset < len(line) and line[spec_offset].isspace():
             spec_offset += 1
         try:
-            node = parse(spec_text)
+            node = parse(spec_text, self.decimal_syntax)
             leaves = flatten_spec(node)
             new_csr = csr_from_nodes(leaves, name=name)
         except CalcError as exc:
@@ -243,7 +263,7 @@ class Session:
         base = self.int_base if base is None else base
         if base != "dec" and isinstance(value.number, int):
             return format_int_base(value.number, base, self.word_size)
-        return format_number(value, self.notation)
+        return format_number(value, self.notation, self.decimal_char)
 
     def views_for(self, value: Value) -> IntegerViews | None:
         """Hex/dec/bin renderings if the value is an integer, else None."""
@@ -256,7 +276,7 @@ class Session:
         maps to a float format (32/64), else None."""
         if isinstance(value.number, int):
             return None
-        return float_views(value.number, self.word_size)
+        return float_views(value.number, self.word_size, self.decimal_char)
 
     def preview(self, text: str) -> Outcome:
         """Side-effect-free evaluation for the live preview line.
@@ -321,4 +341,12 @@ class Session:
         ans_data = data.get("ans")
         self.ans = restore(ans_data) if ans_data is not None else None
 
-__all__ = ["Session", "Outcome", "CalcError", "WORD_SIZES", "NOTATIONS", "INT_BASES"]
+__all__ = [
+    "Session",
+    "Outcome",
+    "CalcError",
+    "WORD_SIZES",
+    "NOTATIONS",
+    "INT_BASES",
+    "DECIMAL_MODES",
+]

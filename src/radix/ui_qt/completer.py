@@ -54,8 +54,11 @@ class Completion:
 
 
 def completions(session: Session) -> list[Completion]:
+    arg_sep = session.decimal_syntax.arg_sep + " "
     items = [
-        Completion(spec.name, spec.name + "(", spec.signature, spec.summary, "function")
+        Completion(
+            spec.name, spec.name + "(", spec.signature_sep(arg_sep), spec.summary, "function"
+        )
         for spec in FUNCTIONS.values()
     ]
     for name in sorted(CONSTANTS):

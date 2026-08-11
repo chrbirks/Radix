@@ -31,7 +31,9 @@ from fractions import Fraction
 
 import mpmath
 
+from radix.engine import numsyntax
 from radix.engine.errors import LexError, Span
+from radix.engine.numsyntax import NumSyntax
 from radix.engine.values import Number
 
 SI_SUFFIXES: dict[str, int] = {
@@ -48,9 +50,11 @@ SI_SUFFIXES: dict[str, int] = {
 }
 BINARY_SUFFIXES: dict[str, int] = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30}
 
-# Longest first so ** << >> // match before their one-char prefixes.
-OPERATORS = ["**", "<<", ">>", "//", "|", "^", "&", "+", "-", "*", "/", "%",
-             "~", "(", ")", "[", "]", ":", ",", "=", "."]
+# Longest first so ** << >> // match before their one-char prefixes. The
+# argument separator (`,` or `;`) is not in this shared list — each Lexer
+# appends the active one, so `,` is a plain decimal char in comma mode.
+OPERATORS_BASE = ["**", "<<", ">>", "//", "|", "^", "&", "+", "-", "*", "/", "%",
+                  "~", "(", ")", "[", "]", ":", "=", "."]
 
 _HDL_BASES = {"h": 16, "b": 2, "d": 10, "o": 8}
 
@@ -72,7 +76,10 @@ def _is_ident_cont(ch: str) -> bool:
     return ch.isalnum() or ch == "_" or ch == "µ"
 
 
-def _decimal_to_number(mantissa: str, exp10: int) -> Number:
+def _decimal_to_number(mantissa: str, exp10: int, decimal_inputs: str = ".") -> Number:
+    for ch in decimal_inputs:
+        if ch != ".":
+            mantissa = mantissa.replace(ch, ".")  # locale decimal → canonical "."
     float(mantissa)  # validates digit-separator placement; raises ValueError
     normalized = mantissa.replace("_", "")
     if normalized.startswith("."):
@@ -86,9 +93,11 @@ def _decimal_to_number(mantissa: str, exp10: int) -> Number:
 
 
 class Lexer:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> None:
         self.text = text
         self.pos = 0
+        self.syntax = syntax
+        self.operators = (*OPERATORS_BASE, syntax.arg_sep)
 
     def tokens(self) -> list[Token]:
         out: list[Token] = []
@@ -111,11 +120,11 @@ class Lexer:
         ch = self._peek()
         if ch == "":
             return Token("EOF", "", Span(start, start))
-        if ch.isdigit() or (ch == "." and self._peek(1).isdigit()):
+        if ch.isdigit() or (ch in self.syntax.decimal_inputs and self._peek(1).isdigit()):
             return self._number(start)
         if _is_ident_start(ch):
             return self._ident_or_vhdl(start)
-        for op in OPERATORS:
+        for op in self.operators:
             if self.text.startswith(op, self.pos):
                 self.pos += len(op)
                 return Token("OP", op, Span(start, self.pos))
@@ -130,7 +139,8 @@ class Lexer:
     def _number(self, start: int) -> Token:
         if self._peek() == "0" and self._peek(1) in ("x", "X", "b", "B", "o", "O"):
             return self._based_number(start)
-        mantissa = self._take_while(lambda c: c.isdigit() or c in "._")
+        decimals = self.syntax.decimal_inputs
+        mantissa = self._take_while(lambda c: c.isdigit() or c == "_" or c in decimals)
         # HDL sized literal: width'hFF etc.
         if self._peek() == "'" and self._peek(1).lower() in _HDL_BASES:
             return self._hdl_number(start, mantissa)
@@ -147,9 +157,9 @@ class Lexer:
             marker = "e" if "e" in literal_text else "E"
             if marker in literal_text:
                 mant, _, exp = literal_text.partition(marker)
-                value = _decimal_to_number(mant, int(exp))
+                value = _decimal_to_number(mant, int(exp), decimals)
             else:
-                value = _decimal_to_number(literal_text, 0)
+                value = _decimal_to_number(literal_text, 0, decimals)
         except (ValueError, ZeroDivisionError) as exc:
             raise LexError(f"malformed number {literal_text!r}", Span(start, self.pos)) from exc
         # SI / binary suffix: the entire adjacent letter-run must be one suffix.
@@ -257,13 +267,13 @@ def _apply_binary_suffix(value: Number, suffix: str) -> Number:
     return as_int if result == as_int else result
 
 
-def tokenize(text: str) -> list[Token]:
-    return Lexer(text).tokens()
+def tokenize(text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> list[Token]:
+    return Lexer(text, syntax).tokens()
 
 
-def tokenize_prefix(text: str) -> list[Token]:
+def tokenize_prefix(text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> list[Token]:
     """Tokens of the longest valid prefix; never raises (for highlighting)."""
-    lexer = Lexer(text)
+    lexer = Lexer(text, syntax)
     out: list[Token] = []
     while True:
         try:

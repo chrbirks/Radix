@@ -22,6 +22,7 @@ Errors at end-of-input raise IncompleteError so the live preview can tell
 
 from __future__ import annotations
 
+from radix.engine import numsyntax
 from radix.engine.errors import IncompleteError, ParseError, Span
 from radix.engine.lexer import Token, tokenize
 from radix.engine.nodes import (
@@ -35,6 +36,7 @@ from radix.engine.nodes import (
     Slice,
     Unary,
 )
+from radix.engine.numsyntax import NumSyntax
 
 BINARY_BP: dict[str, int] = {
     "|": 10,
@@ -57,8 +59,9 @@ SLICE_BP = 90
 
 
 class Parser:
-    def __init__(self, text: str) -> None:
-        self.toks = tokenize(text)
+    def __init__(self, text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> None:
+        self.syntax = syntax
+        self.toks = tokenize(text, syntax)
         self.i = 0
 
     # -- token helpers -----------------------------------------------------
@@ -180,7 +183,7 @@ class Parser:
         args: list[Node] = []
         if not (self.cur.kind == "OP" and self.cur.text == ")"):
             args.append(self._expression(0))
-            while self.cur.kind == "OP" and self.cur.text == ",":
+            while self.cur.kind == "OP" and self.cur.text == self.syntax.arg_sep:
                 self._advance()
                 args.append(self._expression(0))
         closing = self._expect_op(")")
@@ -211,5 +214,5 @@ def _respan(node: Node, span: Span) -> Node:
     return dataclasses.replace(node, span=span)
 
 
-def parse(text: str) -> Node:
-    return Parser(text).parse_line()
+def parse(text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> Node:
+    return Parser(text, syntax).parse_line()

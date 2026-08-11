@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from radix.engine import numsyntax
 from radix.engine.csr import flatten_spec
 from radix.engine.formatter import format_number
 from radix.engine.nodes import (
@@ -33,6 +34,7 @@ from radix.engine.nodes import (
     Slice,
     Unary,
 )
+from radix.engine.numsyntax import NumSyntax
 from radix.engine.parser import BINARY_BP, SLICE_BP, UNARY_BP
 from radix.engine.values import Value
 
@@ -51,9 +53,12 @@ _MAX_SUPERSCRIPT = 10**MAX_SUPERSCRIPT_DIGITS
 
 
 def render(
-    node: Node, variables: Mapping[str, Value], ans: Value | None
+    node: Node,
+    variables: Mapping[str, Value],
+    ans: Value | None,
+    syntax: NumSyntax = numsyntax.DEFAULT,
 ) -> str:
-    return _render(node, variables, ans, parent_bp=0)
+    return _render(node, variables, ans, 0, syntax=syntax)
 
 
 def _render(
@@ -62,39 +67,42 @@ def _render(
     ans: Value | None,
     parent_bp: int,
     parent_op_bp: int | None = None,
+    syntax: NumSyntax = numsyntax.DEFAULT,
 ) -> str:
+    dec = syntax.decimal
     if isinstance(node, Literal):
-        return format_number(Value(node.value))
+        return format_number(Value(node.value), decimal=dec)
     if isinstance(node, Name):
         if node.ident == "ans" and ans is not None:
-            return format_number(ans)
+            return format_number(ans, decimal=dec)
         if node.ident in variables:
-            return format_number(variables[node.ident])
+            return format_number(variables[node.ident], decimal=dec)
         return node.ident  # pi, e, undefined names: keep symbolic
     if isinstance(node, Unary):
-        inner = _render(node.operand, variables, ans, UNARY_BP)
+        inner = _render(node.operand, variables, ans, UNARY_BP, syntax=syntax)
         return _paren(f"{node.op}{inner}", UNARY_BP, parent_bp)
     if isinstance(node, Binary):
-        return _render_binary(node, variables, ans, parent_bp, parent_op_bp)
+        return _render_binary(node, variables, ans, parent_bp, parent_op_bp, syntax)
     if isinstance(node, Call):
+        sep = f"{syntax.arg_sep} "
         if node.func == "csr" and node.args:
-            value_text = _render(node.args[0], variables, ans, 0)
-            parts = [value_text] + [_render_spec(a) for a in node.args[1:]]
-            return f"csr({', '.join(parts)})"
-        args = ", ".join(_render(a, variables, ans, 0) for a in node.args)
+            value_text = _render(node.args[0], variables, ans, 0, syntax=syntax)
+            parts = [value_text] + [_render_spec(a, syntax) for a in node.args[1:]]
+            return f"csr({sep.join(parts)})"
+        args = sep.join(_render(a, variables, ans, 0, syntax=syntax) for a in node.args)
         return f"{node.func}({args})"
     if isinstance(node, Slice):
-        operand = _render(node.operand, variables, ans, SLICE_BP)
-        lsb = _render(node.lsb, variables, ans, 0)
+        operand = _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
+        lsb = _render(node.lsb, variables, ans, 0, syntax=syntax)
         if node.msb is None:
             return f"{operand}[{lsb}]"
-        msb = _render(node.msb, variables, ans, 0)
+        msb = _render(node.msb, variables, ans, 0, syntax=syntax)
         return f"{operand}[{msb}:{lsb}]"
     if isinstance(node, Field):
-        operand = _render(node.operand, variables, ans, SLICE_BP)
+        operand = _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
         return f"{operand}.{node.name}"
     if isinstance(node, Assign):
-        return f"{node.target} ← {_render(node.expr, variables, ans, 0)}"
+        return f"{node.target} ← {_render(node.expr, variables, ans, 0, syntax=syntax)}"
     return "?"  # pragma: no cover
 
 
@@ -104,26 +112,27 @@ def _render_binary(
     ans: Value | None,
     parent_bp: int,
     parent_op_bp: int | None,
+    syntax: NumSyntax = numsyntax.DEFAULT,
 ) -> str:
     bp = BINARY_BP[node.op]
     if node.op == "**":
         superscript = _superscript_exponent(node.right)
         if superscript is not None:
-            inner = _render(node.left, variables, ans, 0)
+            inner = _render(node.left, variables, ans, 0, syntax=syntax)
             base = inner if _is_atom(node.left) else f"({inner})"
             # A superscript is self-grouping: only *required* parens, never
             # clarifying ones, so `2**3 + 1` stays `2³ + 1`.
             return _paren(base + superscript, bp, parent_bp)
-        left = _render(node.left, variables, ans, bp, bp)
-        right = _render(node.right, variables, ans, bp, bp)  # right-assoc
+        left = _render(node.left, variables, ans, bp, bp, syntax)
+        right = _render(node.right, variables, ans, bp, bp, syntax)  # right-assoc
         return _clarify(f"{left}**{right}", bp, parent_bp, parent_op_bp)
-    left = _render(node.left, variables, ans, bp, bp)
-    right = _render(node.right, variables, ans, bp + 1, bp)
+    left = _render(node.left, variables, ans, bp, bp, syntax)
+    right = _render(node.right, variables, ans, bp + 1, bp, syntax)
     op = _OP_DISPLAY.get(node.op, node.op)
     return _clarify(f"{left} {op} {right}", bp, parent_bp, parent_op_bp)
 
 
-def _render_spec(node: Node) -> str:
+def _render_spec(node: Node, syntax: NumSyntax = numsyntax.DEFAULT) -> str:
     """Render a csr()-spec argument as literal field syntax (no substitution)."""
     parts = []
     for leaf in flatten_spec(node):
@@ -133,13 +142,13 @@ def _render_spec(node: Node) -> str:
             # already matches what a bare str() gave, and it stays safe for a
             # value too wide to print (the preview runs before evaluation, so
             # an out-of-range bound reaches here before anything rejects it).
-            lsb = _render(leaf.lsb, {}, None, 0)
+            lsb = _render(leaf.lsb, {}, None, 0, syntax=syntax)
             if leaf.msb is None:
                 parts.append(f"{name}[{lsb}]")
             else:
-                parts.append(f"{name}[{_render(leaf.msb, {}, None, 0)}:{lsb}]")
+                parts.append(f"{name}[{_render(leaf.msb, {}, None, 0, syntax=syntax)}:{lsb}]")
         else:
-            parts.append(_render(leaf, {}, None, 0))
+            parts.append(_render(leaf, {}, None, 0, syntax=syntax))
     return " ".join(parts)
 
 

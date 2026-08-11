@@ -55,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         "--version", action="version", version=f"Radix {__version__}"
     )
     args = parser.parse_args(argv)
-    session = Session()
+    # Comma is the shipped default (see Session.decimal_mode). The GUI's
+    # load_session overrides this with the user's persisted choice if any.
+    session = Session(decimal_mode="comma")
     if args.evaluate is not None:
         return run_expression(session, args.evaluate)
     from radix.ui_qt.app import run_gui

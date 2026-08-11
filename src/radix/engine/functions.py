@@ -27,6 +27,7 @@ class EvalContext:
     word_size: int  # 8 | 16 | 32 | 64
     signed: bool
     angle_deg: bool  # True = degrees, False = radians
+    decimal: str = "."  # decimal point for engine-built display text (viz/notes)
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,10 @@ class FunctionSpec:
     @property
     def signature(self) -> str:
         return f"{self.name}({self.params})"
+
+    def signature_sep(self, sep: str = ", ") -> str:
+        """Signature with the argument separator swapped (`; ` in comma mode)."""
+        return f"{self.name}({self.params.replace(', ', sep)})"
 
 
 class FunctionDomainError(ValueError):

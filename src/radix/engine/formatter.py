@@ -70,7 +70,7 @@ class FloatViews:
 _FLOAT_FORMATS = {32: (">f", 8, 23, 127), 64: (">d", 11, 52, 1023)}
 
 
-def float_views(value: Number, word_size: int) -> FloatViews | None:
+def float_views(value: Number, word_size: int, decimal: str = ".") -> FloatViews | None:
     if word_size not in _FLOAT_FORMATS:
         return None
     pack, exp_width, man_width, bias = _FLOAT_FORMATS[word_size]
@@ -103,15 +103,18 @@ def float_views(value: Number, word_size: int) -> FloatViews | None:
         hex=group_digits(f"{bits:X}", 4, min_width=word_size // 4, prefix="0x"),
         sign_text="-" if sign else "+",
         exponent_text=exponent_text,
-        mantissa_text=mantissa_text,
+        mantissa_text=mantissa_text.replace(".", decimal),
     )
 
 
-def format_number(value: Value, notation: Notation = "auto") -> str:
+def format_number(value: Value, notation: Notation = "auto", decimal: str = ".") -> str:
     """The primary (decimal) rendering of a result.
 
     Integers follow the selected notation too (sci/eng/eng_si), rendering
     like reals at display precision; only ``auto`` keeps them exact.
+
+    ``decimal`` is the character used for the decimal point (``.`` or ``,``);
+    it never touches integer/hex/bin output, which has no point.
     """
     n = value.number
     if value.prefer_si and notation == "auto":
@@ -125,12 +128,12 @@ def format_number(value: Value, notation: Notation = "auto") -> str:
                 # the evaluator's result guard permits ints far wider than that
                 # cap. Such a result is still worth showing — just not
                 # digit-for-digit — so fall back to scientific notation.
-                return format_real(mpmath.mpf(n), "sci")
-        return format_real(mpmath.mpf(n), notation)
-    return format_real(n, notation)
+                return format_real(mpmath.mpf(n), "sci", decimal)
+        return format_real(mpmath.mpf(n), notation, decimal)
+    return format_real(n, notation, decimal)
 
 
-def format_real(x: mpmath.mpf, notation: Notation = "auto") -> str:
+def format_real(x: mpmath.mpf, notation: Notation = "auto", decimal: str = ".") -> str:
     if x == 0:
         return "0"
     if not magnitude_fits(x):
@@ -142,12 +145,12 @@ def format_real(x: mpmath.mpf, notation: Notation = "auto") -> str:
     negative = x < 0
     if notation == "auto":
         if AUTO_PLAIN_MIN_EXP <= exponent <= AUTO_PLAIN_MAX_EXP:
-            return _plain(digits, exponent, negative)
-        return _sci(digits, exponent, negative)
+            return _plain(digits, exponent, negative, decimal)
+        return _sci(digits, exponent, negative, decimal)
     if notation == "sci":
-        return _sci(digits, exponent, negative)
+        return _sci(digits, exponent, negative, decimal)
     if notation in ("eng", "eng_si"):
-        return _eng(digits, exponent, negative, si=notation == "eng_si")
+        return _eng(digits, exponent, negative, si=notation == "eng_si", decimal=decimal)
     raise ValueError(f"unknown notation {notation!r}")
 
 
@@ -223,36 +226,36 @@ def _significant_digits(x: mpmath.mpf, count: int) -> tuple[str, int]:
     return digits, exponent
 
 
-def _plain(digits: str, exponent: int, negative: bool) -> str:
+def _plain(digits: str, exponent: int, negative: bool, decimal: str = ".") -> str:
     sign = "-" if negative else ""
     if exponent >= len(digits) - 1:
         return sign + digits + "0" * (exponent - len(digits) + 1)
     if exponent >= 0:
-        return sign + digits[: exponent + 1] + "." + digits[exponent + 1 :]
-    return sign + "0." + "0" * (-exponent - 1) + digits
+        return sign + digits[: exponent + 1] + decimal + digits[exponent + 1 :]
+    return sign + "0" + decimal + "0" * (-exponent - 1) + digits
 
 
-def _sci(digits: str, exponent: int, negative: bool) -> str:
+def _sci(digits: str, exponent: int, negative: bool, decimal: str = ".") -> str:
     sign = "-" if negative else ""
-    mantissa = digits[0] + ("." + digits[1:] if len(digits) > 1 else "")
+    mantissa = digits[0] + (decimal + digits[1:] if len(digits) > 1 else "")
     return f"{sign}{mantissa}e{exponent:+d}"
 
 
-def _eng(digits: str, exponent: int, negative: bool, si: bool) -> str:
+def _eng(digits: str, exponent: int, negative: bool, si: bool, decimal: str = ".") -> str:
     eng_exp = 3 * (exponent // 3)
     shift = exponent - eng_exp  # 0, 1 or 2 digits before the point
     mantissa_digits = digits + "0" * max(0, shift + 1 - len(digits))
     head = mantissa_digits[: shift + 1]
     tail = mantissa_digits[shift + 1 :]
-    mantissa = head + ("." + tail if tail else "")
+    mantissa = head + (decimal + tail if tail else "")
     sign = "-" if negative else ""
     if si and eng_exp in _SI_BY_EXP:
         return f"{sign}{mantissa}{_SI_BY_EXP[eng_exp]}"
     return f"{sign}{mantissa}e{eng_exp:+d}"
 
 
-def format_si(x: Number) -> str:
+def format_si(x: Number, decimal: str = ".") -> str:
     """Engineering + SI-suffix rendering used by period()/freq() style output."""
     if isinstance(x, int):
         x = mpmath.mpf(x)
-    return format_real(x, "eng_si")
+    return format_real(x, "eng_si", decimal)
