@@ -21,6 +21,12 @@ ambiguity to resolve about major/minor/patch.
   mode — no per-expression modes; operator meanings (`**`, `^`, `>>`) are
   unchanged.
 
+### Removed
+
+- The `vN` version label from the status bar, giving the mode, theme, and help
+  buttons more room. The version is still shown at the top of the help overview
+  (the `?` button or **F1**).
+
 ## [9] - 2026-08-10
 
 ### Changed

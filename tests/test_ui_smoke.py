@@ -314,12 +314,14 @@ def test_theme_mode_icon_renders_for_every_mode(qtbot) -> None:  # type: ignore[
         assert not pixmap.isNull()
 
 
-def test_version_shown_in_status_bar_not_title(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+def test_version_not_in_title_but_in_help(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     from radix import __version__
+    from radix.engine.help import general_help_html
 
     assert window.windowTitle() == "Radix"
     assert __version__ not in window.windowTitle()
-    assert window.version_label.text() == f"v{__version__}"
+    # The version is no longer in the status bar; it lives in the help overview.
+    assert f"Radix v{__version__}" in general_help_html()
 
 
 def test_zone_captions_have_expected_text(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
