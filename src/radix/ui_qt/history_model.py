@@ -3,7 +3,8 @@
 Two lines per entry (three with a note): a muted `expression`, then an
 accent `= ` leader followed by the result. An assignment paints a rounded
 chip with the variable name instead of the `x ← ` prefix text. A hairline
-divider separates entries.
+divider separates one entry from the next — the last entry gets none, since
+the RESULT caption's rule already closes the pane.
 """
 
 from __future__ import annotations
@@ -329,13 +330,18 @@ class HistoryDelegate(QStyledItemDelegate):
                 f"({note})",
             )
 
-        painter.setPen(QColor(p.hairline))
-        painter.drawLine(
-            option.rect.left() + ROW_PAD_H,
-            option.rect.bottom(),
-            option.rect.right() - ROW_PAD_H,
-            option.rect.bottom(),
-        )
+        # Between entries only. The trailing rule under the newest entry
+        # separated nothing, and landed a few pixels above the RESULT caption's
+        # own rule — three hairlines inside ~18px, which read as an artifact.
+        model = index.model()
+        if model is not None and index.row() < model.rowCount() - 1:
+            painter.setPen(QColor(p.hairline))
+            painter.drawLine(
+                option.rect.left() + ROW_PAD_H,
+                option.rect.bottom(),
+                option.rect.right() - ROW_PAD_H,
+                option.rect.bottom(),
+            )
         painter.restore()
 
     def sizeHint(

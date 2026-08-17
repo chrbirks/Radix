@@ -202,10 +202,13 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QMainWindow, QWidget#root {{
         background: {p.background};
     }}
+    /* No bottom border on the pane-stack pages: the RESULT ZoneCaption's rule
+       sits ~10px below and is the zone divider (as it is for TRACE/PINNED/
+       READOUT/REGISTER), so a second edge here only ever read as a double
+       line. helpPane never had one — history and vars now match it. */
     QListView#history {{
         background: {p.background};
         border: none;
-        border-bottom: 1px solid {p.hairline};
         padding: 6px;
     }}
     QWidget#inputBar {{
@@ -356,7 +359,6 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
         background: {p.surface};
         color: {p.text};
         border: none;
-        border-bottom: 1px solid {p.hairline};
         padding: 8px;
         font-size: {FONT_UI}px;
     }}

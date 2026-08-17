@@ -1234,6 +1234,7 @@ class MainWindow(QMainWindow):
         self.delegate.set_palette(palette)
         self.history_view.set_palette(palette)
         self._update_theme_chip()
+        self.pane_caption.set_palette(palette)
         self.result_caption.set_palette(palette)
         self.inspector.set_palette(palette)
         self.highlighter.set_palette(palette)

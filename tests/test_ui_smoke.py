@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
 from PySide6.QtGui import QFontMetrics  # noqa: E402
 
 from radix.engine.values import Value  # noqa: E402
@@ -328,6 +328,58 @@ def test_zone_captions_have_expected_text(qtbot, window: MainWindow) -> None:  #
     assert window.inspector.trace_caption.text() == "TRACE"
     assert window.intview.readout_caption.text() == "READOUT"
     assert window.intview.register_caption.text() == "REGISTER"
+
+
+def _row_has_bottom_rule(window: MainWindow, row: int) -> bool:
+    """Paint one history row into an image and look for the delegate's hairline
+    on its last scanline.
+
+    Painted straight from the delegate rather than grabbed off the live view:
+    that keeps the answer independent of scroll position, viewport margins and
+    offscreen layout quirks. The delegate sets no Antialiasing hint and draws on
+    integer coordinates, so the separator is an exact `hairline` match.
+    """
+    from PySide6.QtGui import QColor, QImage, QPainter
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    index = window.model.index(row, 0)
+    option = QStyleOptionViewItem()
+    option.font = window.history_view.font()
+    option.rect = QRect(0, 0, 400, 1)
+    height = window.delegate.sizeHint(option, index).height()
+    option.rect = QRect(0, 0, 400, height)
+
+    image = QImage(400, height, QImage.Format.Format_RGB32)
+    image.fill(QColor("white"))
+    painter = QPainter(image)
+    window.delegate.paint(painter, option, index)
+    painter.end()
+
+    hairline = QColor(LIGHT.hairline).rgb()
+    return any(image.pixel(x, height - 1) == hairline for x in range(400))
+
+
+def test_history_rows_are_separated_but_the_last_one_is_not(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Three hairlines used to stack inside ~18px here: this trailing rule, the
+    # list's border-bottom, and the RESULT caption's own rule ~10px lower. The
+    # caption rule is the zone divider, so the other two went.
+    for expr in ("1 + 1", "2 + 2", "3 + 3"):
+        _submit(qtbot, window, expr)
+    assert window.model.rowCount() == 3
+    assert _row_has_bottom_rule(window, 0)
+    assert _row_has_bottom_rule(window, 1)
+    assert not _row_has_bottom_rule(window, 2)
+
+
+def test_apply_palette_repaints_both_zone_captions(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # The HISTORY caption used to be skipped here, so a live theme switch left
+    # its text and rule drawn in the outgoing theme's colours.
+    from radix.ui_qt.theme import DARK
+
+    window.apply_palette(DARK)
+    for caption in (window.pane_caption, window.result_caption):
+        assert caption._hairline == DARK.hairline
+        assert caption._muted == DARK.muted
 
 
 def test_trace_caption_visibility_tracks_vizpanel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

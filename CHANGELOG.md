@@ -9,6 +9,19 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Fixed
+
+- The band between the history pane and the RESULT readout drew three grey
+  hairlines stacked inside ~18px — a rule under the newest history entry, the
+  pane's own bottom border, and the RESULT caption's rule — each at a different
+  inset, which read as a rendering artifact rather than a divider. The caption
+  rule is now the only one, matching every other zone boundary (TRACE, PINNED,
+  READOUT, REGISTER). Entries are still separated from each other; the variables
+  pane lost the same doubled edge, so all three pane views now match.
+- The **HISTORY** caption kept the outgoing theme's text and rule colours after
+  a live theme switch (**Alt+M**), instead of repainting with the rest of the
+  window.
+
 ## [10] - 2026-08-11
 
 ### Added
