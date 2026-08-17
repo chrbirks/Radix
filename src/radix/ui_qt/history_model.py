@@ -3,8 +3,9 @@
 Two lines per entry (three with a note): a muted `expression`, then an
 accent `= ` leader followed by the result. An assignment paints a rounded
 chip with the variable name instead of the `x ← ` prefix text. A hairline
-divider separates one entry from the next — the last entry gets none, since
-the RESULT caption's rule already closes the pane.
+divider tops every entry but the first, separating it from the one above —
+neither end of the list gets a rule, since the HISTORY and RESULT captions
+already frame the pane.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ PREFIX_ROLE = Qt.ItemDataRole.UserRole + 4
 ROW_PAD_H = 10
 ROW_PAD_TOP = 8
 ROW_PAD_BOT = 8
+# How much of the row above a divider must be visible (viewport px) before the
+# divider paints: its bottom padding plus a few px of descender scraps. Below
+# this, the divider would sit under blank pixels and read as a floating line.
+DIVIDER_ANCHOR_TAIL = ROW_PAD_BOT + 6
 LINE_GAP = 3
 RESULT_INDENT = 16
 BADGE_PAD_H = 6
@@ -330,17 +335,21 @@ class HistoryDelegate(QStyledItemDelegate):
                 f"({note})",
             )
 
-        # Between entries only. The trailing rule under the newest entry
-        # separated nothing, and landed a few pixels above the RESULT caption's
-        # own rule — three hairlines inside ~18px, which read as an artifact.
-        model = index.model()
-        if model is not None and index.row() < model.rowCount() - 1:
+        # Between entries only, anchored to the row's *top* edge. Anchoring at
+        # the bottom put a rule under the newest entry (doubling the RESULT
+        # caption's rule below), and — since the view follows the bottom — left
+        # the scrolled-off top row's rule floating just under the HISTORY
+        # caption with no content attached. The anchor-tail guard covers the
+        # remaining case: when the row above is cut by the viewport edge,
+        # option.rect.top() (viewport coords) is exactly its visible tail, and
+        # a divider under nothing but its blank bottom padding still floats.
+        if index.row() > 0 and option.rect.top() >= DIVIDER_ANCHOR_TAIL:
             painter.setPen(QColor(p.hairline))
             painter.drawLine(
                 option.rect.left() + ROW_PAD_H,
-                option.rect.bottom(),
+                option.rect.top(),
                 option.rect.right() - ROW_PAD_H,
-                option.rect.bottom(),
+                option.rect.top(),
             )
         painter.restore()
 

@@ -290,19 +290,22 @@ def test_fixed_view_handles_an_odd_width(qtbot, window: MainWindow) -> None:  # 
 
 
 def test_only_result_readout_has_sunken_background(qtbot) -> None:  # type: ignore[no-untyped-def]
-    # Only the RESULT readout should stand out with the darker surface_sunken
-    # fill -- TRACE/READOUT/REGISTER all match the plain chassis background.
+    # Only the RESULT readout and the PINNED rack get the recessed
+    # surface_sunken fill — TRACE/READOUT/REGISTER match the plain chassis
+    # background, so they must have no styling blocks of their own at all
+    # (their old border-top rules doubled the zone captions' rules).
     from radix.ui_qt import theme
     from radix.ui_qt.theme import DARK
 
     mono, label = theme.load_bundled_font()
     qss = theme.stylesheet(DARK, mono, label)
     result_block = qss.split("QLabel#resultValue {")[1].split("}")[0]
-    vizpanel_block = qss.split("QWidget#vizPanel {")[1].split("}")[0]
-    intview_block = qss.split("QWidget#intview {")[1].split("}")[0]
+    rack_block = qss.split("QWidget#channelsRack {")[1].split("}")[0]
     assert "background" in result_block
-    assert "background" not in vizpanel_block
-    assert "background" not in intview_block
+    assert "surface_sunken" not in rack_block  # token interpolated, not literal
+    assert DARK.surface_sunken in rack_block
+    assert "QWidget#vizPanel" not in qss
+    assert "QWidget#intview" not in qss
 
 
 def test_theme_mode_icon_renders_for_every_mode(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -330,14 +333,16 @@ def test_zone_captions_have_expected_text(qtbot, window: MainWindow) -> None:  #
     assert window.intview.register_caption.text() == "REGISTER"
 
 
-def _row_has_bottom_rule(window: MainWindow, row: int) -> bool:
+def _row_has_rule(window: MainWindow, row: int, scanline: str, viewport_top: int = 60) -> bool:
     """Paint one history row into an image and look for the delegate's hairline
-    on its last scanline.
+    on its first ("top") or last ("bottom") scanline.
 
+    `viewport_top` is where the row's rect starts, mimicking its viewport-coord
+    position in a live view — the delegate's anchor-tail guard reads it.
     Painted straight from the delegate rather than grabbed off the live view:
     that keeps the answer independent of scroll position, viewport margins and
     offscreen layout quirks. The delegate sets no Antialiasing hint and draws on
-    integer coordinates, so the separator is an exact `hairline` match.
+    integer coordinates, so the divider is an exact `hairline` match.
     """
     from PySide6.QtGui import QColor, QImage, QPainter
     from PySide6.QtWidgets import QStyleOptionViewItem
@@ -347,28 +352,54 @@ def _row_has_bottom_rule(window: MainWindow, row: int) -> bool:
     option.font = window.history_view.font()
     option.rect = QRect(0, 0, 400, 1)
     height = window.delegate.sizeHint(option, index).height()
-    option.rect = QRect(0, 0, 400, height)
+    option.rect = QRect(0, viewport_top, 400, height)
 
-    image = QImage(400, height, QImage.Format.Format_RGB32)
+    image = QImage(400, viewport_top + height, QImage.Format.Format_RGB32)
     image.fill(QColor("white"))
     painter = QPainter(image)
     window.delegate.paint(painter, option, index)
     painter.end()
 
     hairline = QColor(LIGHT.hairline).rgb()
-    return any(image.pixel(x, height - 1) == hairline for x in range(400))
+    y = viewport_top if scanline == "top" else viewport_top + height - 1
+    return any(image.pixel(x, y) == hairline for x in range(400))
 
 
-def test_history_rows_are_separated_but_the_last_one_is_not(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    # Three hairlines used to stack inside ~18px here: this trailing rule, the
-    # list's border-bottom, and the RESULT caption's own rule ~10px lower. The
-    # caption rule is the zone divider, so the other two went.
+def test_history_dividers_top_anchored_between_entries_only(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Dividers hang from the top of every row but the first, so neither end of
+    # the list paints one: a bottom-anchored trailing rule used to double the
+    # RESULT caption's rule, and — with the view following the bottom — the
+    # scrolled-off top row's rule floated just under the HISTORY caption.
     for expr in ("1 + 1", "2 + 2", "3 + 3"):
         _submit(qtbot, window, expr)
     assert window.model.rowCount() == 3
-    assert _row_has_bottom_rule(window, 0)
-    assert _row_has_bottom_rule(window, 1)
-    assert not _row_has_bottom_rule(window, 2)
+    assert not _row_has_rule(window, 0, "top")
+    assert _row_has_rule(window, 1, "top")
+    assert _row_has_rule(window, 2, "top")
+    for row in range(3):
+        assert not _row_has_rule(window, row, "bottom")
+
+
+def test_history_divider_needs_an_anchor_above_it(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # When the row above is cut by the viewport edge so only its blank bottom
+    # padding shows, the divider is dropped rather than left floating just
+    # under the HISTORY caption. rect.top() is that row's visible tail.
+    from radix.ui_qt.history_model import DIVIDER_ANCHOR_TAIL
+
+    for expr in ("1 + 1", "2 + 2"):
+        _submit(qtbot, window, expr)
+    assert not _row_has_rule(window, 1, "top", viewport_top=0)
+    assert not _row_has_rule(window, 1, "top", viewport_top=DIVIDER_ANCHOR_TAIL - 1)
+    assert _row_has_rule(window, 1, "top", viewport_top=DIVIDER_ANCHOR_TAIL)
+
+
+def test_styled_backgrounds_enabled_on_qss_targets(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    # Plain QWidgets silently ignore QSS background/border without this
+    # attribute — the input bar's surface band + focus underline and the
+    # pinned rack's sunken tray never painted until it was set.
+    attr = Qt.WidgetAttribute.WA_StyledBackground
+    assert window.input_bar.testAttribute(attr)
+    assert window.channels.testAttribute(attr)
 
 
 def test_apply_palette_repaints_both_zone_captions(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1228,7 +1259,7 @@ def test_bit_grid_wraps_to_window_width(qtbot, window: MainWindow) -> None:  # t
 def test_empty_rack_shows_hint(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     assert window.channels.channels == []
     assert not window.channels.hint_label.isHidden()
-    assert window.channels.hint_label.text() == "nothing pinned -- Alt+P pins the last result"
+    assert window.channels.hint_label.text() == "nothing pinned — Alt+P pins the last result"
 
 
 def test_pin_via_history_context_menu(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1318,7 +1349,7 @@ def test_channel_rack_caps_at_max_channels(qtbot, window: MainWindow) -> None:  
     assert len(window.channels.channels) == 8
     window._pin_value(Value(99), None)
     assert len(window.channels.channels) == 8
-    assert window.preview.text() == "pinned rack full -- unpin one"
+    assert window.preview.text() == "pinned rack full — unpin one"
 
 
 def test_base_cycle_reformats_pinned_channel(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

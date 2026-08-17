@@ -411,6 +411,9 @@ class MainWindow(QMainWindow):
 
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
+        # The default corner grip draws dotted texture into the chip row;
+        # window edges still resize without it.
+        bar.setSizeGripEnabled(False)
         self.status_items: dict[str, QToolButton] = {}
         for key, _shortcut, _description in MODE_CHIPS:
             chip = QToolButton()
@@ -881,7 +884,7 @@ class MainWindow(QMainWindow):
         already = self.channels.label_of(value) if label is None else None
         assigned = self.channels.pin(value, text, label)
         if assigned is None:
-            self._toast("pinned rack full -- unpin one")
+            self._toast("pinned rack full — unpin one")
         elif already is not None:
             self._toast(f"already pinned as {already}")
         else:
@@ -1111,7 +1114,7 @@ class MainWindow(QMainWindow):
     def _refresh_vars_pane(self) -> None:
         self.vars_pane.clear()
         if not self.session.variables and not self.session.csrs:
-            placeholder = QListWidgetItem("no variables -- assign with  x = 42")
+            placeholder = QListWidgetItem("no variables — assign with  x = 42")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self.vars_pane.addItem(placeholder)
             return

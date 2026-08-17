@@ -257,6 +257,9 @@ class ChannelsRack(QWidget):
     def __init__(self, palette: Palette, clipboard_setter: Callable[[str], None]) -> None:
         super().__init__()
         self.setObjectName("channelsRack")
+        # Required for the QSS surface_sunken background to paint at all
+        # (matches the chanStrip widgets, which already set it).
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.palette_tokens = palette
         self._clipboard = clipboard_setter
         self.channels: list[Channel] = []
@@ -264,7 +267,7 @@ class ChannelsRack(QWidget):
         self.word_size = 64
         self._live: int | None = None
 
-        self.hint_label = QLabel("nothing pinned -- Alt+P pins the last result")
+        self.hint_label = QLabel("nothing pinned — Alt+P pins the last result")
         self.hint_label.setProperty("class", "chanHint")
 
         self.layout_ = QVBoxLayout(self)

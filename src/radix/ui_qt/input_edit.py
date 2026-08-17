@@ -103,6 +103,9 @@ class InputBar(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("inputBar")
+        # Plain QWidgets ignore QSS background/border without this — the
+        # surface band and the focus underline silently never painted.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("focused", "false")
 
         self.prompt = QLabel("›")

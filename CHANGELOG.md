@@ -9,7 +9,28 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Changed
+
+- Hint strings ("nothing pinned", "no variables", "pinned rack full") now use a
+  real em dash instead of the ASCII `--` stand-in.
+- The status bar no longer shows the dotted resize grip in its corner; window
+  edges still resize as before.
+
 ### Fixed
+
+- With the history scrolled (its normal state — the view follows the newest
+  entry), the divider of the row scrolled off the top floated just below the
+  HISTORY caption with no content attached. Entry dividers now hang from the
+  top of each row instead of the bottom, so nothing floats at either end.
+- The TRACE card drew a full-width border a few pixels below the TRACE
+  caption's own rule — the same doubled-line artifact as the RESULT band.
+- The input bar's designed styling never rendered (a missing Qt widget
+  attribute): it now sits on a raised surface band and shows its accent
+  underline while the input has focus, as the code always intended.
+- The pinned-channels rack's recessed background (same tone as the RESULT
+  readout) never rendered, for the same reason.
+- Horizontal scrollbars (the help pane's, in practice) rendered in the stock
+  widget style instead of the app's flat theme.
 
 - The band between the history pane and the RESULT readout drew three grey
   hairlines stacked inside ~18px — a rule under the newest history entry, the

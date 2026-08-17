@@ -276,12 +276,6 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
     QScrollArea#inspectorScroll > QWidget > QWidget {{
         background: {p.background};
     }}
-    QWidget#intview {{
-        border-top: 1px solid {p.hairline};
-    }}
-    QWidget#vizPanel {{
-        border-top: 1px solid {p.hairline};
-    }}
     QLabel.baseName, QLabel.laneName {{
         color: {p.muted};
         font-family: "{label}";
@@ -410,7 +404,17 @@ def stylesheet(p: Palette, mono: str, label: str = LABEL_FAMILY) -> str:
         border-radius: 4px;
         min-height: 24px;
     }}
-    QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 8px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {p.hairline};
+        border-radius: 4px;
+        min-width: 24px;
+    }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+    QAbstractScrollArea::corner {{ background: transparent; }}
     """
 
 
