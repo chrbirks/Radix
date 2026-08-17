@@ -1,3 +1,3 @@
 """Radix: keyboard-first scientific + programmer calculator."""
 
-__version__ = "10"
+__version__ = "11"

@@ -9,6 +9,8 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+## [11] - 2026-08-17
+
 ### Changed
 
 - Hint strings ("nothing pinned", "no variables", "pinned rack full") now use a
