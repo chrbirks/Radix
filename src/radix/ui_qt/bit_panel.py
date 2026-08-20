@@ -56,6 +56,7 @@ ROW_H = HEX_H + CELL + GAP + INDEX_H
 BYTE_WIDTH = 8 * (CELL + GAP) + 2 * NIBBLE_GAP  # one byte group incl. nibble gaps
 LANE_ROWS = 5  # max simultaneous lanes (HEX/DEC/BIN, or HEX/VAL/SGN/EXP/MAN)
 TOP_MARGIN = 8  # above the first row, so tall hex-digit labels don't clip the widget edge
+GRID_INSET = 12  # left/right inset of the cell rows; matches the 12px margin_wrap gutter
 BOTTOM_MARGIN = 4
 
 
@@ -210,7 +211,7 @@ class BitGrid(QWidget):
         self.update()
 
     def _bits_per_row(self) -> int:
-        usable = max(self.width() - 8, BYTE_WIDTH)
+        usable = max(self.width() - 2 * GRID_INSET, BYTE_WIDTH)
         bytes_fit = max(1, (usable + NIBBLE_GAP) // BYTE_WIDTH)
         return min(self.word_size, 8 * bytes_fit)
 
@@ -300,12 +301,12 @@ class BitGrid(QWidget):
         # the only case where the two differ.
         row_hi, _ = self._row_span(row)
         nibble_gaps = row_hi // 4 - bit // 4
-        x = 4 + col * (CELL + GAP) + nibble_gaps * NIBBLE_GAP
+        x = GRID_INSET + col * (CELL + GAP) + nibble_gaps * NIBBLE_GAP
         y = self._row_top(row) + self._field_h(row) + HEX_H
         return QRectF(x, y, CELL, CELL)
 
     def sizeHint(self) -> QSize:
-        return QSize(2 * BYTE_WIDTH, self._grid_height())
+        return QSize(2 * BYTE_WIDTH + 2 * GRID_INSET, self._grid_height())
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)

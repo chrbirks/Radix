@@ -18,6 +18,8 @@ ambiguity to resolve about major/minor/patch.
   name needs, and very long names are elided past a fixed height cap.
 - The CSR field listing under the register grid now shows one field per
   line with the `=` signs aligned, instead of one wrapped run-on line.
+- The bit-box rows are inset to the same 12px gutter as the captions,
+  readout and field table, instead of sitting 8px further left.
 
 ### Fixed
 

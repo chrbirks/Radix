@@ -267,7 +267,7 @@ def test_fixed_view_is_read_only_and_survives_a_word_size_cycle(qtbot, window: M
 def test_bit_grid_geometry_unchanged_for_standard_word_sizes(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     # Nibble gaps are now derived per row rather than from the column index, so
     # every session word size has to land exactly where it did before.
-    from radix.ui_qt.bit_panel import CELL, GAP, NIBBLE_GAP
+    from radix.ui_qt.bit_panel import CELL, GAP, GRID_INSET, NIBBLE_GAP
 
     grid = window.intview.grid_widget
     for word_size in (8, 16, 32, 64):
@@ -275,7 +275,8 @@ def test_bit_grid_geometry_unchanged_for_standard_word_sizes(qtbot, window: Main
         per_row = grid._bits_per_row()
         for bit in range(word_size):
             row, col = divmod(word_size - 1 - bit, per_row)
-            assert grid._cell_rect(bit).left() == 4 + col * (CELL + GAP) + col // 4 * NIBBLE_GAP
+            expected = GRID_INSET + col * (CELL + GAP) + col // 4 * NIBBLE_GAP
+            assert grid._cell_rect(bit).left() == expected
 
 
 def test_fixed_view_handles_an_odd_width(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1240,16 +1241,16 @@ def test_theme_mode_persists_across_windows(qtbot, tmp_path) -> None:  # type: i
 
 
 def test_bit_grid_wraps_to_window_width(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    from radix.ui_qt.bit_panel import BYTE_WIDTH
+    from radix.ui_qt.bit_panel import BYTE_WIDTH, GRID_INSET
 
     grid = window.intview.grid_widget
-    narrow = BYTE_WIDTH + 12  # fits exactly one byte group per row
+    narrow = BYTE_WIDTH + 2 * GRID_INSET  # fits exactly one byte group per row
     grid.resize(narrow, 100)
     grid.set_state(0, 32, True)
     assert grid._bits_per_row() == 8
     assert grid._rows() == 4
     assert all(grid._cell_rect(b).right() <= narrow for b in range(32))
-    wide = 4 * BYTE_WIDTH + 12  # fits all four byte groups on one row
+    wide = 4 * BYTE_WIDTH + 2 * GRID_INSET  # fits all four byte groups on one row
     grid.resize(wide, 100)
     assert grid._bits_per_row() == 32
     assert grid._rows() == 1
