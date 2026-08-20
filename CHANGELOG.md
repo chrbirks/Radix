@@ -9,6 +9,14 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Changed
+
+- REGISTER field names that don't fit their bit span (e.g. `LATCH` over a
+  1-bit field) no longer get truncated to `…`: when any name overflows, the
+  whole label strip tilts 45° so every name stays legible. Only rows that
+  carry a tilted label grow taller, and very long names are elided past a
+  fixed height cap.
+
 ## [11] - 2026-08-17
 
 ### Changed

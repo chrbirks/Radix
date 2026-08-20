@@ -1594,7 +1594,41 @@ def test_register_csr_shows_grid_overlay_matching_fields(qtbot, window: MainWind
     )
     rows = grid._rows()
     assert rows == no_csr_rows  # same word size -> same row count
+    # Two glyphs fit a 24px cell, so every name sits inside its span and the
+    # strip keeps the slim horizontal layout.
+    assert not grid._angled
     assert grid.minimumHeight() == no_csr_min_h + rows * FIELD_H
+
+
+def test_register_csr_short_names_stay_horizontal(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.ui_qt.bit_panel import FIELD_H
+
+    grid = window.intview.grid_widget
+    no_csr_min_h = grid.minimumHeight()
+    _submit(qtbot, window, "csr(0x5, A[0] B[1] C[3:2])")
+    assert not grid._angled
+    rows = grid._rows()
+    assert all(grid._field_h(r) == FIELD_H for r in range(rows))
+    assert grid.minimumHeight() == no_csr_min_h + rows * FIELD_H
+
+
+def test_register_csr_long_name_in_narrow_field_tilts_labels(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.ui_qt.bit_panel import FIELD_ANGLED_H, FIELD_H
+
+    grid = window.intview.grid_widget
+    _submit(qtbot, window, "csr(0x5, A[0] B[1] C[3:2])")
+    horizontal_min_h = grid.minimumHeight()
+    _submit(qtbot, window, "csr(0x8041, EN[0] LATCH[1] PER[7:2])")
+    assert grid._angled
+    rows = grid._rows()
+    # Only the row carrying a label pays for the tall strip; a field-less
+    # upper row of the wrapped word keeps the slim one.
+    assert grid._field_h(rows - 1) == FIELD_ANGLED_H
+    assert all(grid._field_h(r) == FIELD_H for r in range(rows - 1))
+    assert grid.minimumHeight() == horizontal_min_h + (FIELD_ANGLED_H - FIELD_H)
+    # The label strip sits above the cells, never over them.
+    assert grid._cell_rect(0).top() > grid._row_top(rows - 1) + FIELD_ANGLED_H
+    grid.grab()  # exercises the rotated text path
 
 
 def test_register_csr_field_table_visible_with_values(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

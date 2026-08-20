@@ -8,11 +8,21 @@ result reseeds the scratch. Float results grey the panel.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -35,6 +45,13 @@ HEX_H = 20  # strip above each cell row for per-nibble hex digits
 INDEX_H = 18  # strip below each cell row for bit-index labels
 FIELD_H = 20  # field-band strip above the hex strip, present only with a csr
 FIELD_LABEL_GAP = 4  # breathing room between the field name and its bracket line
+# When any field name is wider than its bracket span, every label in the grid
+# tilts 45° (uniform strip, nothing elided to "…" over a 1-bit field). The
+# tilted strip is a fixed height: names whose rise would exceed
+# FIELD_LABEL_MAX_PX are elided instead of growing the grid further.
+FIELD_ANGLE = 45
+FIELD_LABEL_MAX_PX = 84  # vertical extent budget of a tilted label (~12 chars)
+FIELD_ANGLED_H = FIELD_LABEL_MAX_PX + FIELD_LABEL_GAP + 4
 ROW_H = HEX_H + CELL + GAP + INDEX_H
 BYTE_WIDTH = 8 * (CELL + GAP) + 2 * NIBBLE_GAP  # one byte group incl. nibble gaps
 LANE_ROWS = 5  # max simultaneous lanes (HEX/DEC/BIN, or HEX/VAL/SGN/EXP/MAN)
@@ -96,6 +113,7 @@ class BitGrid(QWidget):
         # (name, msb, lsb) tuples, msb-descending, when a register field
         # layout is showing. Unlike float mode, cells stay clickable/editable.
         self.named_fields: tuple[tuple[str, int, int], ...] | None = None
+        self._angled = False  # field labels tilted because one overflows its span
         self._hover_bit: int | None = None
         self._press_bit: int | None = None
         self._dragging = False
@@ -123,6 +141,48 @@ class BitGrid(QWidget):
         self.named_fields = named_fields
         self._apply_height()
         self.update()
+
+    def _micro_font(self) -> QFont:
+        font = QFont(self.font())
+        font.setPixelSize(FONT_MICRO)
+        return font
+
+    def _field_segments(self) -> Iterator[tuple[int, str, int, int, bool]]:
+        """(field_index, name, bit_left, bit_right, is_msb_segment) per drawn row.
+
+        Walks each visible field (msb < word_size) row by row, yielding the
+        highest/lowest bit of the part that lands on that row. The name is
+        drawn only on the MSB-most segment; other rows get just the bracket.
+        """
+        assert self.named_fields is not None
+        per_row = self._bits_per_row()
+        for field_index, (name, msb, lsb) in enumerate(self.named_fields):
+            if msb >= self.word_size:
+                continue  # clipped by the current word size: not drawn
+            pos_start = self.word_size - 1 - msb
+            pos_end = self.word_size - 1 - lsb
+            for row in range(self._rows()):
+                row_start = row * per_row
+                seg_start = max(pos_start, row_start)
+                seg_end = min(pos_end, row_start + per_row - 1)
+                if seg_start > seg_end:
+                    continue
+                bit_left = self.word_size - 1 - seg_start
+                bit_right = self.word_size - 1 - seg_end
+                yield field_index, name, bit_left, bit_right, seg_start == pos_start
+
+    def _labels_overflow(self) -> bool:
+        """True when some field name is wider than the span it would sit over."""
+        if self.named_fields is None:
+            return False
+        fm = QFontMetrics(self._micro_font())
+        for _i, name, bit_left, bit_right, is_msb in self._field_segments():
+            if not is_msb:
+                continue
+            span = self._cell_rect(bit_right).right() - self._cell_rect(bit_left).left()
+            if fm.horizontalAdvance(name) > span:
+                return True
+        return False
 
     def _band_of(self, bit: int) -> int:
         """0 (sign) / 1 (exponent, integer) / 2 (mantissa, fraction) for a bit."""
@@ -157,11 +217,39 @@ class BitGrid(QWidget):
         per_row = self._bits_per_row()
         return (self.word_size + per_row - 1) // per_row
 
-    def _row_h(self) -> int:
-        return ROW_H + (FIELD_H if self.named_fields else 0)
+    def _field_h(self, row: int) -> int:
+        """Height of the field strip above `row`'s hex digits.
+
+        Tilted labels need the tall strip, but only on rows that carry one —
+        a wrapped 64-bit word's field-less upper row keeps the slim strip
+        instead of a blank band the height of a word.
+        """
+        if self.named_fields is None:
+            return 0
+        if self._angled and row in self._label_rows():
+            return FIELD_ANGLED_H
+        return FIELD_H
+
+    def _label_rows(self) -> set[int]:
+        per_row = self._bits_per_row()
+        return {
+            (self.word_size - 1 - bit_left) // per_row
+            for _i, _name, bit_left, _r, is_msb in self._field_segments()
+            if is_msb
+        }
+
+    def _row_top(self, row: int) -> int:
+        """y of the top of `row`'s field strip (or hex strip, without fields)."""
+        return TOP_MARGIN + sum(ROW_H + self._field_h(r) for r in range(row))
+
+    def _grid_height(self) -> int:
+        return self._row_top(self._rows()) + BOTTOM_MARGIN
 
     def _apply_height(self) -> None:
-        self.setMinimumHeight(self._rows() * self._row_h() + TOP_MARGIN + BOTTOM_MARGIN)
+        # Span widths depend on the row wrap (hence on the widget width), so
+        # the tilt decision is re-taken whenever the height is.
+        self._angled = self._labels_overflow()
+        self.setMinimumHeight(self._grid_height())
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         self._apply_height()
@@ -185,12 +273,11 @@ class BitGrid(QWidget):
         row_hi, _ = self._row_span(row)
         nibble_gaps = row_hi // 4 - bit // 4
         x = 4 + col * (CELL + GAP) + nibble_gaps * NIBBLE_GAP
-        field_offset = FIELD_H if self.named_fields else 0
-        y = TOP_MARGIN + row * self._row_h() + field_offset + HEX_H
+        y = self._row_top(row) + self._field_h(row) + HEX_H
         return QRectF(x, y, CELL, CELL)
 
     def sizeHint(self) -> QSize:
-        return QSize(2 * BYTE_WIDTH, self._rows() * self._row_h() + TOP_MARGIN + BOTTOM_MARGIN)
+        return QSize(2 * BYTE_WIDTH, self._grid_height())
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
@@ -308,52 +395,61 @@ class BitGrid(QWidget):
         """Bracket + name over each row a field spans (dimension-line style).
 
         A field wrapping across rows draws its name once, on the row holding
-        its MSB-most segment; other rows get only the bracket.
+        its MSB-most segment; other rows get only the bracket. Names sit
+        horizontally inside their span, or — when any one of them would not
+        fit — the whole strip tilts 45° (see `FIELD_ANGLE`).
         """
         assert self.named_fields is not None
         p = self.palette_tokens
+        micro_font = self._micro_font()
+        fm = QFontMetrics(micro_font)
         per_row = self._bits_per_row()
-        rows = self._rows()
-        micro_font = QFont(painter.font())
-        micro_font.setPixelSize(FONT_MICRO)
-        for field_index, (name, msb, lsb) in enumerate(self.named_fields):
-            if msb >= self.word_size:
-                continue  # clipped by the current word size: not drawn
+        for field_index, name, bit_left, bit_right, is_msb in self._field_segments():
             color = QColor(p.field_bands[field_index % len(p.field_bands)])
-            pos_start = self.word_size - 1 - msb
-            pos_end = self.word_size - 1 - lsb
-            for row in range(rows):
-                row_start = row * per_row
-                row_end = row_start + per_row - 1
-                seg_start = max(pos_start, row_start)
-                seg_end = min(pos_end, row_end)
-                if seg_start > seg_end:
-                    continue
-                bit_left = self.word_size - 1 - seg_start
-                bit_right = self.word_size - 1 - seg_end
-                left_rect = self._cell_rect(bit_left)
-                right_rect = self._cell_rect(bit_right)
-                y_top = TOP_MARGIN + row * self._row_h()
-                y_line = y_top + FIELD_H - 4
-                x_left, x_right = left_rect.left(), right_rect.right()
-                painter.setPen(QPen(color, 1.5))
-                painter.drawLine(QPointF(x_left, y_line), QPointF(x_right, y_line))
-                painter.drawLine(QPointF(x_left, y_line), QPointF(x_left, y_line + 3))
-                painter.drawLine(QPointF(x_right, y_line), QPointF(x_right, y_line + 3))
-                if seg_start == pos_start:
-                    painter.setFont(micro_font)
-                    painter.setPen(color)
-                    label_rect = QRectF(
-                        x_left, y_top, x_right - x_left, y_line - y_top - FIELD_LABEL_GAP
-                    )
-                    text = painter.fontMetrics().elidedText(
-                        name, Qt.TextElideMode.ElideRight, int(label_rect.width())
-                    )
-                    painter.drawText(
-                        label_rect,
-                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                        text,
-                    )
+            row = (self.word_size - 1 - bit_left) // per_row
+            left_rect = self._cell_rect(bit_left)
+            right_rect = self._cell_rect(bit_right)
+            y_top = self._row_top(row)
+            y_line = y_top + self._field_h(row) - 4
+            x_left, x_right = left_rect.left(), right_rect.right()
+            painter.setPen(QPen(color, 1.5))
+            painter.drawLine(QPointF(x_left, y_line), QPointF(x_right, y_line))
+            painter.drawLine(QPointF(x_left, y_line), QPointF(x_left, y_line + 3))
+            painter.drawLine(QPointF(x_right, y_line), QPointF(x_right, y_line + 3))
+            if not is_msb:
+                continue
+            painter.setFont(micro_font)
+            painter.setPen(color)
+            if not self._angled:
+                label_rect = QRectF(
+                    x_left, y_top, x_right - x_left, y_line - y_top - FIELD_LABEL_GAP
+                )
+                text = fm.elidedText(name, Qt.TextElideMode.ElideRight, int(label_rect.width()))
+                painter.drawText(
+                    label_rect,
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                    text,
+                )
+                continue
+            # Tilted: baseline starts over the first cell's centre and rises
+            # to the upper-right. Budget the run so it neither exceeds the
+            # strip height nor leaves the widget's right edge.
+            anchor = QPointF(x_left + CELL / 2, y_line - FIELD_LABEL_GAP)
+            rad = math.radians(FIELD_ANGLE)
+            # The glyph ascent projects onto both axes too; subtract it so
+            # the last glyph's top stays inside the strip and the widget.
+            ascent = fm.ascent()
+            avail = min(
+                (FIELD_LABEL_MAX_PX - ascent * math.cos(rad)) / math.sin(rad),
+                (self.width() - anchor.x() - ascent * math.sin(rad) - 2) / math.cos(rad),
+            )
+            text = fm.elidedText(name, Qt.TextElideMode.ElideRight, int(avail))
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+            painter.translate(anchor)
+            painter.rotate(-FIELD_ANGLE)
+            painter.drawText(QPointF(0, 0), text)
+            painter.restore()
 
     def _bit_at(self, pos: QPointF) -> int | None:
         for bit in range(self.word_size):
