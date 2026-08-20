@@ -565,6 +565,10 @@ class IntegerView(QWidget):
         self.fixed_view: FixedPointViz | None = None  # fix()/unfix() Qm.n
         self.float_bits: FloatBitsViz | None = None  # float32()/float64() and their inverses
         self.csr: Csr | None = None  # field layout for the shown value
+        # Argument separator for the one-shot `csr(value, SPEC)` form written
+        # back to the input line. Read at emit time (the owner points it at
+        # the session's decimal syntax) so it can never go stale.
+        self.arg_sep: Callable[[], str] = lambda: ","
 
         self.rows: dict[str, tuple[QLabel, QLabel]] = {}
         self._copy_texts: dict[str, str] = {}
@@ -1033,6 +1037,15 @@ class IntegerView(QWidget):
         if sliced is not None:
             hi, lo, _, _ = sliced
             self.value_to_input.emit(f"0x{self._masked_scratch:X}[{hi}:{lo}]")
+            return
+        literal = f"0x{self._masked_scratch:X}"
+        # Under a csr layout the edit is written back as the decode expression
+        # itself: the preview then re-derives the same layout instead of
+        # reading a bare literal and dropping it.
+        if self.csr is None:
+            self.value_to_input.emit(literal)
+        elif self.csr.name is not None:
+            self.value_to_input.emit(f"{self.csr.name}({literal})")
         else:
-            self.value_to_input.emit(f"0x{self._masked_scratch:X}")
+            self.value_to_input.emit(f"csr({literal}{self.arg_sep()} {self.csr.spec_text()})")
 

@@ -301,6 +301,7 @@ class MainWindow(QMainWindow):
         self.intview = self.inspector.intview
         self.channels = self.inspector.channels
         self.intview.value_to_input.connect(self._set_input)
+        self.intview.arg_sep = lambda: self.session.decimal_syntax.arg_sep
         self.intview.copied.connect(self._toast)
         self.channels.to_input.connect(self._set_input)
         self.channels.copied.connect(self._toast)
@@ -494,6 +495,16 @@ class MainWindow(QMainWindow):
             self.input.clear()
             self._toast(f"deleted {outcome.target}")
             self._refresh_vars_pane()
+            shown = self.intview.csr
+            if shown is not None and shown.name == outcome.target:
+                # The layout on show no longer resolves by name: drop it so a
+                # bit edit can't write back `NAME(0x..)` for a deleted csr.
+                self.intview.show_value(
+                    self.intview.scratch if self.intview.active else None,
+                    self.session.word_size,
+                    self.session.signed,
+                    csr=None,
+                )
             if self.store is not None:
                 save_state(self.session)
             return

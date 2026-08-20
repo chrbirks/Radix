@@ -1674,6 +1674,51 @@ def test_register_csr_field_table_updates_on_bit_toggle(qtbot, window: MainWindo
     window.intview.toggle_bit(0)  # inside CMD[7:0]: 0xF3 -> 0xF2
     assert "0xF2" in window.intview.field_table.text()
     assert "0xF3" not in window.intview.field_table.text()
+    # The edit is written back as the decode expression, so the debounced
+    # preview re-derives the same layout instead of wiping it.
+    assert window.input.text() == "CTRL(0x8C01A0F2)"
+    window._update_preview()
+    assert window.intview.csr is not None
+    assert window.intview.grid_widget.named_fields is not None
+    assert "0xF2" in window.intview.field_table.text()
+
+
+def test_register_csr_survives_real_bit_click(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _define_ctrl_csr(qtbot, window)
+    _submit(qtbot, window, "CTRL(0x8C01A0F3)")
+    grid = window.intview.grid_widget
+    window.show()
+    qtbot.mouseClick(grid, Qt.MouseButton.LeftButton, pos=grid._cell_rect(0).center().toPoint())
+    assert window.input.text() == "CTRL(0x8C01A0F2)"
+    window._update_preview()
+    assert window.intview.csr is not None
+    assert grid.named_fields is not None
+    assert "0xF2" in window.intview.field_table.text()
+
+
+def test_register_one_shot_csr_bit_click_round_trips(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _submit(qtbot, window, "csr(0x8041, EN[0] LATCH[1] PER[7:2])")
+    window.intview.toggle_bit(0)
+    # Fields are stored msb-descending, so the spec comes back in that order.
+    assert window.input.text() == "csr(0x8040, PER[7:2] LATCH[1] EN[0])"
+    window._update_preview()
+    assert window.intview.csr is not None
+    qtbot.keyClick(window.input, Qt.Key.Key_Return)
+    assert window.model.entries[-1].result == "32832"
+    assert window.intview.csr is not None  # committing the edit keeps the layout too
+
+
+def test_register_csr_cleared_when_its_definition_is_deleted(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    _define_ctrl_csr(qtbot, window)
+    _submit(qtbot, window, "CTRL(0x8C01A0F3)")
+    assert window.intview.csr is not None
+    _submit(qtbot, window, "del CTRL")
+    assert window.intview.csr is None
+    assert window.intview.grid_widget.named_fields is None
+    window.intview.toggle_bit(0)
+    assert window.input.text() == "0x8C01A0F2"  # plain literal, no dangling CTRL(...)
+    window._update_preview()
+    assert window.intview.csr is None
 
 
 def test_register_csr_field_link_selects_range(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

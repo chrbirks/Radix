@@ -19,6 +19,14 @@ ambiguity to resolve about major/minor/patch.
 - The CSR field listing under the register grid now shows one field per
   line with the `=` signs aligned, instead of one wrapped run-on line.
 
+### Fixed
+
+- Clicking a bit while a CSR layout is shown no longer drops the layout a
+  moment later. The edit is written back to the input line as the decode
+  expression itself (`CTRL(0x…)` or `csr(0x…, SPEC)`), so the overlay, the
+  field table and the committed history entry all stay in sync. Deleting
+  the csr that is currently shown clears the layout.
+
 ## [11] - 2026-08-17
 
 ### Changed
