@@ -1658,14 +1658,12 @@ def test_register_csr_field_table_visible_with_values(qtbot, window: MainWindow)
     _submit(qtbot, window, "CTRL(0x8C01A0F3)")
 
     assert window.intview.field_table.isVisibleTo(window)
-    # Entries are glued with &nbsp; so a wrap can only fall between fields,
-    # never between a name and its bracket; normalise that back for reading.
-    text = window.intview.field_table.text().replace("&nbsp;", " ")
-    assert "EN" in text
-    assert "CMD" in text
-    assert "0xF3" in text  # CMD = 0xF3, matching decode_note's own formatting
-    assert "</a> [31] = 1" in text  # single-bit field: collapsed range, not [31:31]
-    assert "[31:31]" not in text
+    markup = window.intview.field_table.text()
+    assert "EN" in markup
+    assert "CMD" in markup
+    assert "<td>0xF3</td>" in markup  # CMD = 0xF3, matching decode_note's own formatting
+    assert "</a>&nbsp;[31]</td>" in markup  # single-bit field: collapsed range, not [31:31]
+    assert "[31:31]" not in markup
 
 
 def test_register_csr_field_table_updates_on_bit_toggle(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -1699,8 +1697,8 @@ def test_register_csr_survives_word_size_cycle(qtbot, window: MainWindow) -> Non
     window._after_setting_change()
     assert window.intview.grid_widget.named_fields is not None  # overlay still not wiped
     assert window.intview.grid_widget._field_index_of(7) == 3  # CMD (top byte) still active
-    clipped = window.intview.field_table.text().replace("&nbsp;", " ")
-    assert "= -" in clipped  # EN reported as clipped
+    clipped = window.intview.field_table.text()
+    assert ">-</span></td>" in clipped  # EN reported as clipped
 
 
 def test_register_csr_cleared_by_plain_number(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
@@ -2159,17 +2157,16 @@ def test_pinning_the_same_value_twice_reuses_the_channel(qtbot, window: MainWind
 # -- csr field table ------------------------------------------------------------------
 
 
-def test_csr_field_entries_never_wrap_mid_field(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
-    """A break between "CMD" and "[7:0]" reads as two separate things."""
+def test_csr_field_table_one_row_per_field_aligned_on_equals(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Each field is its own table row: name [range] | = | value."""
     _define_ctrl_csr(qtbot, window)
     _submit(qtbot, window, "CTRL(0x8C01A0F3)")
     markup = window.intview.field_table.text()
     for name in ("EN", "IRQ", "ADDR", "CMD"):
         assert f"{name}</a>&nbsp;[" in markup, f"{name} can wrap from its bracket"
-    # No breakable space anywhere inside an entry: every plain space left in
-    # the markup belongs to an HTML attribute, never to "NAME [msb:lsb] = v".
-    assert " [" not in markup
-    assert " = " not in markup
+    assert markup.count("<tr>") == 4  # one row per field
+    assert markup.count("<td") == 12  # three cells each, so the "=" column lines up
+    assert markup.count(">=</td>") == 4
 
 
 # -- keyboard access to the bit grid ---------------------------------------------------

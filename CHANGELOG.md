@@ -16,6 +16,8 @@ ambiguity to resolve about major/minor/patch.
   whole label strip tilts 45° so every name stays legible. Tilted names are
   centred over wide fields, each row's strip is only as tall as its longest
   name needs, and very long names are elided past a fixed height cap.
+- The CSR field listing under the register grid now shows one field per
+  line with the `=` signs aligned, instead of one wrapped run-on line.
 
 ## [11] - 2026-08-17
 

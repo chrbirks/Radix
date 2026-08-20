@@ -867,13 +867,17 @@ class IntegerView(QWidget):
             return
         self.field_table.setVisible(True)
         field_bands = self.palette_tokens.field_bands
-        parts = []
+        # One field per row, as a rich-text table so every "=" lands in the
+        # same column whatever the name lengths: name [range] | = | value.
+        rows = []
         for field_index, f in enumerate(self.csr.fields):
             bracket = f"[{f.msb}]" if f.msb == f.lsb else f"[{f.msb}:{f.lsb}]"
             if f.msb >= self.word_size:
-                parts.append(
-                    f'<span style="color:{self.palette_tokens.muted}">'
-                    f"{f.name}&nbsp;{bracket}&nbsp;=&nbsp;-</span>"
+                muted = self.palette_tokens.muted
+                rows.append(
+                    f'<tr><td><span style="color:{muted}">{f.name}&nbsp;{bracket}</span></td>'
+                    f'<td style="padding:0 6px; color:{muted}">=</td>'
+                    f'<td><span style="color:{muted}">-</span></td></tr>'
                 )
                 continue
             value = (self._masked_scratch >> f.lsb) & ((1 << f.width) - 1)
@@ -881,17 +885,15 @@ class IntegerView(QWidget):
             # Name colored to match its grid bracket, so the table and the
             # overlay above read as one mapping, not two separate legends.
             color = field_bands[field_index % len(field_bands)]
-            # Non-breaking inside an entry: the wrap has to fall between fields,
-            # never between a name and its bracket ("CMD" / "[7:0] = 0xF3").
-            parts.append(
-                f'<a href="{f.name}" style="color:{color}; text-decoration:none;">{f.name}</a>'
-                f"&nbsp;{bracket}&nbsp;=&nbsp;{text}"
+            rows.append(
+                f'<tr><td><a href="{f.name}" style="color:{color}; text-decoration:none;">'
+                f"{f.name}</a>&nbsp;{bracket}</td>"
+                f'<td style="padding:0 6px">=</td>'
+                f"<td>{text}</td></tr>"
             )
-        # Two non-breaking spaces for the gutter plus one real space: the only
-        # place the line is allowed to wrap is between whole entries. All
-        # non-breaking (as it was) would push the last field off the edge
-        # instead of wrapping it.
-        self.field_table.setText("&nbsp;&nbsp; ".join(parts))
+        self.field_table.setText(
+            '<table cellspacing="0" cellpadding="0">' + "".join(rows) + "</table>"
+        )
 
     def _on_field_link(self, name: str) -> None:
         if self.csr is None:
