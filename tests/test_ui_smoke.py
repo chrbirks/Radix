@@ -1621,14 +1621,36 @@ def test_register_csr_long_name_in_narrow_field_tilts_labels(qtbot, window: Main
     _submit(qtbot, window, "csr(0x8041, EN[0] LATCH[1] PER[7:2])")
     assert grid._angled
     rows = grid._rows()
-    # Only the row carrying a label pays for the tall strip; a field-less
-    # upper row of the wrapped word keeps the slim one.
-    assert grid._field_h(rows - 1) == FIELD_ANGLED_H
+    # Only the row carrying a label pays for a taller strip, sized to its
+    # tallest name (short names: well under the cap); a field-less upper row
+    # of the wrapped word keeps the slim one.
+    assert FIELD_H < grid._field_h(rows - 1) < FIELD_ANGLED_H
     assert all(grid._field_h(r) == FIELD_H for r in range(rows - 1))
-    assert grid.minimumHeight() == horizontal_min_h + (FIELD_ANGLED_H - FIELD_H)
+    assert grid.minimumHeight() == horizontal_min_h + (grid._field_h(rows - 1) - FIELD_H)
     # The label strip sits above the cells, never over them.
-    assert grid._cell_rect(0).top() > grid._row_top(rows - 1) + FIELD_ANGLED_H
+    assert grid._cell_rect(0).top() > grid._row_top(rows - 1) + grid._field_h(rows - 1)
     grid.grab()  # exercises the rotated text path
+
+
+def test_register_csr_overlong_name_caps_strip_height(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.ui_qt.bit_panel import FIELD_ANGLED_H
+
+    grid = window.intview.grid_widget
+    _submit(qtbot, window, "csr(0, A_VERY_LONG_FIELD_NAME_INDEED[1:0] X[3])")
+    assert grid._angled
+    assert grid._field_h(grid._rows() - 1) == FIELD_ANGLED_H
+    grid.grab()
+
+
+def test_register_csr_tilted_label_centres_over_wide_field() -> None:
+    from radix.ui_qt.bit_panel import CELL, BitGrid
+
+    x_left, x_right = 100.0, 260.0  # a 6-cell span
+    centre = (x_left + x_right) / 2
+    anchor = BitGrid._label_anchor_x(30.0, x_left, x_right)
+    assert abs(anchor + 30.0 * 0.5**0.5 / 2 - centre) < 1e-6  # footprint centred
+    # A 1-cell span can't centre a wide label: it pins over the cell instead.
+    assert BitGrid._label_anchor_x(30.0, x_left, x_left + CELL) == x_left + CELL / 2
 
 
 def test_register_csr_field_table_visible_with_values(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]

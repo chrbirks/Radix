@@ -114,6 +114,7 @@ class BitGrid(QWidget):
         # layout is showing. Unlike float mode, cells stay clickable/editable.
         self.named_fields: tuple[tuple[str, int, int], ...] | None = None
         self._angled = False  # field labels tilted because one overflows its span
+        self._field_heights: list[int] = []  # per-row field strip height, see _apply_height
         self._hover_bit: int | None = None
         self._press_bit: int | None = None
         self._dragging = False
@@ -217,38 +218,65 @@ class BitGrid(QWidget):
         per_row = self._bits_per_row()
         return (self.word_size + per_row - 1) // per_row
 
-    def _field_h(self, row: int) -> int:
-        """Height of the field strip above `row`'s hex digits.
+    def _label_rise(self, fm: QFontMetrics, name: str) -> float:
+        """Vertical extent of `name` drawn at FIELD_ANGLE, capped at the budget."""
+        rad = math.radians(FIELD_ANGLE)
+        rise = fm.horizontalAdvance(name) * math.sin(rad) + fm.ascent() * math.cos(rad)
+        return min(float(FIELD_LABEL_MAX_PX), rise)
 
-        Tilted labels need the tall strip, but only on rows that carry one —
-        a wrapped 64-bit word's field-less upper row keeps the slim strip
-        instead of a blank band the height of a word.
+    @staticmethod
+    def _label_anchor_x(text_w: float, x_left: float, x_right: float) -> float:
+        """x where a tilted label's baseline starts.
+
+        Centred over the span when it fits there; otherwise pinned over the
+        first cell's centre so a long name over a 1-bit field runs off to the
+        right instead of sliding over its left-hand neighbour.
         """
-        if self.named_fields is None:
-            return 0
-        if self._angled and row in self._label_rows():
-            return FIELD_ANGLED_H
-        return FIELD_H
+        footprint = text_w * math.cos(math.radians(FIELD_ANGLE))
+        return max(x_left + CELL / 2, (x_left + x_right) / 2 - footprint / 2)
 
-    def _label_rows(self) -> set[int]:
+    def _measure_field_heights(self) -> list[int]:
+        """Per-row field strip height.
+
+        Horizontal labels: the slim FIELD_H everywhere. Tilted: each row is
+        exactly as tall as its tallest label needs (up to FIELD_ANGLED_H, the
+        point where names get elided instead), and rows without a label —
+        a wrapped word's field-less upper row — keep the slim strip.
+        """
+        rows = self._rows()
+        if self.named_fields is None:
+            return [0] * rows
+        heights = [FIELD_H] * rows
+        if not self._angled:
+            return heights
+        fm = QFontMetrics(self._micro_font())
         per_row = self._bits_per_row()
-        return {
-            (self.word_size - 1 - bit_left) // per_row
-            for _i, _name, bit_left, _r, is_msb in self._field_segments()
-            if is_msb
-        }
+        for _i, name, bit_left, _r, is_msb in self._field_segments():
+            if not is_msb:
+                continue
+            row = (self.word_size - 1 - bit_left) // per_row
+            needed = math.ceil(self._label_rise(fm, name)) + FIELD_LABEL_GAP + 4
+            heights[row] = max(heights[row], needed)
+        return heights
+
+    def _field_h(self, row: int) -> int:
+        """Height of the field strip above `row`'s hex digits (cached)."""
+        return self._field_heights[row] if row < len(self._field_heights) else 0
 
     def _row_top(self, row: int) -> int:
         """y of the top of `row`'s field strip (or hex strip, without fields)."""
-        return TOP_MARGIN + sum(ROW_H + self._field_h(r) for r in range(row))
+        return TOP_MARGIN + row * ROW_H + sum(self._field_heights[:row])
 
     def _grid_height(self) -> int:
         return self._row_top(self._rows()) + BOTTOM_MARGIN
 
     def _apply_height(self) -> None:
         # Span widths depend on the row wrap (hence on the widget width), so
-        # the tilt decision is re-taken whenever the height is.
+        # the tilt decision and strip heights are re-taken whenever the
+        # height is. Only x-geometry is read while measuring, so the stale
+        # height cache is harmless until it is replaced here.
         self._angled = self._labels_overflow()
+        self._field_heights = self._measure_field_heights()
         self.setMinimumHeight(self._grid_height())
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -431,19 +459,21 @@ class BitGrid(QWidget):
                     text,
                 )
                 continue
-            # Tilted: baseline starts over the first cell's centre and rises
-            # to the upper-right. Budget the run so it neither exceeds the
-            # strip height nor leaves the widget's right edge.
-            anchor = QPointF(x_left + CELL / 2, y_line - FIELD_LABEL_GAP)
+            # Tilted: baseline rises to the upper-right from over the span.
+            # Budget the run so it neither exceeds the strip height nor
+            # leaves the widget's right edge (measured from the leftmost
+            # possible anchor, the worst case). The glyph ascent projects
+            # onto both axes too, so it is subtracted from each budget.
             rad = math.radians(FIELD_ANGLE)
-            # The glyph ascent projects onto both axes too; subtract it so
-            # the last glyph's top stays inside the strip and the widget.
             ascent = fm.ascent()
+            x_min = x_left + CELL / 2
             avail = min(
                 (FIELD_LABEL_MAX_PX - ascent * math.cos(rad)) / math.sin(rad),
-                (self.width() - anchor.x() - ascent * math.sin(rad) - 2) / math.cos(rad),
+                (self.width() - x_min - ascent * math.sin(rad) - 2) / math.cos(rad),
             )
             text = fm.elidedText(name, Qt.TextElideMode.ElideRight, int(avail))
+            anchor_x = self._label_anchor_x(fm.horizontalAdvance(text), x_left, x_right)
+            anchor = QPointF(anchor_x, y_line - FIELD_LABEL_GAP)
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
             painter.translate(anchor)
