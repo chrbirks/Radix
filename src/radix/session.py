@@ -14,6 +14,7 @@ from typing import Any
 from radix.engine import evaluator, render
 from radix.engine import fpga as _fpga  # noqa: F401 — registers the FPGA toolkit
 from radix.engine import help as help_mod
+from radix.engine import timeconv as _timeconv  # noqa: F401 — registers epoch()
 from radix.engine.csr import (
     Csr,
     csr_from_json,

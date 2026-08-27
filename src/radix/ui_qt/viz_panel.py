@@ -1,7 +1,7 @@
 """Contextual visualization card between the preview and the integer panel.
 
 Shows the card-shaped `viz` payloads some toolkit results carry — clock
-relations and memory sizing. Payloads that describe a *word* (Qm.n,
+relations, memory sizing, and epoch time. Payloads that describe a *word* (Qm.n,
 IEEE-754) render in the REGISTER frame instead, in `bit_panel`, so the bits
 under discussion are never drawn twice at two scales. The engine computes
 every number in the payload — this widget only draws. Hidden when the
@@ -14,10 +14,10 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QMouseEvent, QPainter, QPaintEvent, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
-from radix.engine.viz import ClockViz, MemViz
+from radix.engine.viz import ClockViz, MemViz, TimeViz
 from radix.ui_qt.theme import FONT_BODY, FONT_MICRO, Palette
 
-CardPayload = ClockViz | MemViz
+CardPayload = ClockViz | MemViz | TimeViz
 
 CARD_PAD = 12
 LINE_H = 24
@@ -69,7 +69,7 @@ class VizPanel(QWidget):
             lines = 2 if payload.divisor is not None else 1
             wave = WAVE_STRIP_H if _has_wave(payload) else 0
             self.setFixedHeight(8 + lines * LINE_H + wave + 10)
-        elif isinstance(payload, MemViz):
+        elif isinstance(payload, (MemViz, TimeViz)):
             self.setFixedHeight(8 + 2 * LINE_H + 10)
         self.setVisible(payload is not None)
         self.update()
@@ -84,6 +84,8 @@ class VizPanel(QWidget):
             self._paint_clock(painter, self.payload)
         elif isinstance(self.payload, MemViz):
             self._paint_mem(painter, self.payload)
+        elif isinstance(self.payload, TimeViz):
+            self._paint_time(painter, self.payload)
         painter.end()
 
     # -- memory sizing ------------------------------------------------------------
@@ -117,6 +119,27 @@ class VizPanel(QWidget):
         painter.drawText(
             QRectF(CARD_PAD + METER_TRACK_W + 10, 8 + LINE_H, self.width() - CARD_PAD, LINE_H),
             Qt.AlignmentFlag.AlignVCenter, label,
+        )
+
+    # -- epoch time --------------------------------------------------------------
+
+    def _paint_time(self, painter: QPainter, viz: TimeViz) -> None:
+        p = self.palette_tokens
+        font = painter.font()
+        font.setPixelSize(FONT_BODY)
+        painter.setFont(font)
+        painter.setPen(QColor(p.text))
+        line = f"{viz.date_text} {viz.time_text} UTC    {viz.weekday_text}"
+        painter.drawText(QRectF(CARD_PAD, 8, self.width() - 2 * CARD_PAD, LINE_H),
+                         Qt.AlignmentFlag.AlignVCenter, line)
+        painter.setPen(QColor(p.muted))
+        segments = [f"unit {viz.unit}"]
+        if viz.seconds_text is not None:
+            segments.append(f"= {viz.seconds_text}")
+        segments += [f"ISO week {viz.iso_week_text}", viz.day_text]
+        painter.drawText(
+            QRectF(CARD_PAD, 8 + LINE_H, self.width() - 2 * CARD_PAD, LINE_H),
+            Qt.AlignmentFlag.AlignVCenter, "    ".join(segments),
         )
 
     # -- clock / divider ---------------------------------------------------------

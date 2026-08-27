@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 from radix.engine.errors import CalcError, IncompleteError
 from radix.engine.help import general_help_html
 from radix.engine.values import Value
-from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz
+from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz, TimeViz
 from radix.history.store import HistoryStore, StoredEntry
 from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Session
 from radix.ui_qt.completer import Completer
@@ -634,7 +634,9 @@ class MainWindow(QMainWindow):
         """
         viz = value.viz if value is not None else None
         # TRACE is now only the card-shaped payloads; bit layouts live in REGISTER.
-        self.inspector.show_viz_payload(viz if isinstance(viz, (ClockViz, MemViz)) else None)
+        self.inspector.show_viz_payload(
+            viz if isinstance(viz, (ClockViz, MemViz, TimeViz)) else None
+        )
         number = value.number if value is not None else None
         self.channels.set_live(number if isinstance(number, int) else None)
         if isinstance(viz, FixedPointViz):

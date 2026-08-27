@@ -84,4 +84,17 @@ class FloatBitsViz:
     mantissa_text: str  # decoded, e.g. "1.5"
 
 
-VizPayload: TypeAlias = FixedPointViz | ClockViz | MemViz | FloatBitsViz
+@dataclass(frozen=True)
+class TimeViz:
+    """UTC breakdown for epoch(t); the input unit is auto-detected by magnitude."""
+
+    unit: str  # detected input unit: "s" | "ms" | "µs" | "ns"
+    date_text: str  # "2009-02-13"
+    time_text: str  # "23:31:30.123" — fraction only when nonzero
+    weekday_text: str  # "Friday" (fixed English table, never locale strftime)
+    iso_week_text: str  # "2009-W07" (ISO 8601 week-numbering year)
+    day_text: str  # "day 44 of 365"
+    seconds_text: str | None  # in seconds, e.g. "1234567890.123 s"; None when unit is "s"
+
+
+VizPayload: TypeAlias = FixedPointViz | ClockViz | MemViz | FloatBitsViz | TimeViz

@@ -88,6 +88,8 @@ directory (no logout needed).
   434  (actual 115.207k, error +64 ppm)
 > mem(4096, 36)            RAM sizing: address bits, capacity, utilization
   147456  (addr 12 bits, 18 KiB)
+> epoch(1234567890)        Unix epoch → UTC; unit s/ms/µs/ns auto-detected
+  1234567890  (2009-02-13 23:31:30 UTC · s)
 > fix(0.7071, 1, 15)       fixed-point Qm.n with quantization error shown
   23170  (0x5A82)
 > float32(1.5)             IEEE-754 bit pattern as an integer; unfloat32/64 decodes

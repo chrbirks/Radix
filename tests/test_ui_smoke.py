@@ -482,6 +482,23 @@ def test_viz_panel_mem_card(qtbot, window: MainWindow) -> None:  # type: ignore[
     assert payload.addressable == 4096
 
 
+def test_viz_panel_time_card(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    from radix.engine.viz import TimeViz
+    from radix.ui_qt.viz_panel import LINE_H
+
+    _submit(qtbot, window, "epoch(1234567890123)")
+    assert window.vizpanel.isVisibleTo(window)
+    payload = window.vizpanel.payload
+    assert isinstance(payload, TimeViz)
+    assert payload.unit == "ms"
+    assert window.vizpanel.height() == 8 + 2 * LINE_H + 10
+    assert window.intview.active  # the int result still drives the bit grid
+    _submit(qtbot, window, "epoch(1.5)")
+    payload = window.vizpanel.payload
+    assert isinstance(payload, TimeViz)  # card stays for a real-valued timestamp
+    assert not window.intview.active  # ... while the int panel greys like any real
+
+
 def test_float32_renders_in_the_register_frame(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "float32(1.5)")
     assert not window.vizpanel.isVisibleTo(window)

@@ -7,6 +7,17 @@ Versions are a simple incrementing integer (1, 2, 3, …), not semantic
 versioning — there's one user, no external API to keep compatible, and no
 ambiguity to resolve about major/minor/patch.
 
+## [Unreleased]
+
+### Added
+
+- `epoch(t)`: Unix epoch timestamp → UTC date and time. The input unit
+  (s/ms/µs/ns) is auto-detected from the magnitude and always named in the
+  result; a TRACE card shows the date, time, weekday, ISO week and
+  day-of-year, plus the value normalized to seconds for ms/µs/ns inputs.
+  The numeric result is the timestamp unchanged, so the hex/dec/bin views
+  and bit grid keep working.
+
 ## [12] - 2026-08-23
 
 ### Changed
