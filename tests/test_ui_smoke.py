@@ -2410,8 +2410,13 @@ def test_vars_pane_csr_row_right_click_deletes(qtbot, window: MainWindow) -> Non
     it is up, since ``QMenu.exec`` blocks until then."""
     from PySide6.QtCore import QTimer
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QMenu
+    from PySide6.QtWidgets import QApplication, QMenu
 
+    if QApplication.platformName() == "wayland":
+        # The compositor grants a popup grab only to a window that has had
+        # real input, so exec() returns at once with nothing chosen. The
+        # deletion itself is covered on every platform by the test below.
+        pytest.skip("Wayland refuses a popup grab for a programmatically shown window")
     _define_ctrl_csr(qtbot, window)
     window._show_vars()
     item = next(

@@ -18,7 +18,14 @@ from radix.ui_qt.theme import DARK, LIGHT  # noqa: E402
 
 @pytest.fixture
 def window(qtbot):  # type: ignore[no-untyped-def]
-    """Shown and focused: focus assertions need a real active window."""
+    """Shown, with the input focused.
+
+    Focus is asserted through ``window.focusWidget()`` — the window's own
+    focus chain — not ``QApplication.focusWidget()``. The latter needs the
+    window to be *active*, and a Wayland compositor never activates a window
+    a test shows programmatically, so it stays None there; the window-local
+    chain still moves to a leaking widget on a Tab or a click.
+    """
     win = MainWindow(Session(), LIGHT)
     qtbot.addWidget(win)
     win.show()
@@ -39,7 +46,7 @@ def test_tab_with_help_showing_keeps_focus_on_input(qtbot, window: MainWindow) -
     _submit(qtbot, window, "help")
     assert window.help_pane.isVisibleTo(window)
     qtbot.keyClick(window.input, Qt.Key.Key_Tab)
-    assert QApplication.focusWidget() is window.input
+    assert window.focusWidget() is window.input
     qtbot.keyClicks(window.input, "1+1")
     assert window.input.text() == "1+1"
 
@@ -47,19 +54,19 @@ def test_tab_with_help_showing_keeps_focus_on_input(qtbot, window: MainWindow) -
 def test_click_on_help_pane_keeps_focus_on_input(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "help")
     qtbot.mouseClick(window.help_pane.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
-    assert QApplication.focusWidget() is window.input
+    assert window.focusWidget() is window.input
 
 
 def test_click_on_result_readout_keeps_focus_on_input(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "6*7")
     qtbot.mouseClick(window.result_label, Qt.MouseButton.LeftButton)
-    assert QApplication.focusWidget() is window.input
+    assert window.focusWidget() is window.input
 
 
 def test_click_on_lane_value_keeps_focus_on_input(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
     _submit(qtbot, window, "0xFF")
     qtbot.mouseClick(window.intview.rows["HEX"][1], Qt.MouseButton.LeftButton)
-    assert QApplication.focusWidget() is window.input
+    assert window.focusWidget() is window.input
 
 
 # -- completer re-entrancy ------------------------------------------------------

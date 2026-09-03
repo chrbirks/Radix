@@ -21,6 +21,18 @@
   reproduce the original squeeze — offscreen geometry differs enough from a
   real session that measuring in a scratch script against a live
   `MainWindow` is still the authoritative check for layout work.
+- Running the suite bare on a Wayland desktop (no `QT_QPA_PLATFORM=offscreen`)
+  differs from offscreen in two ways that matter for tests. (1) The
+  compositor never *activates* a window a test shows, so
+  `QApplication.focusWidget()` stays `None`; assert focus through the
+  window-local chain, `window.focusWidget()`, which still moves on a Tab or
+  a click into a leaking widget. (2) A popup grab (`QMenu.exec`) is refused
+  for a window that has had no real input — `exec()` returns at once with
+  `None` and logs "Failed to create grabbing popup" — and patching
+  `QMenu.exec` on the class does not take effect in PySide6, so a test that
+  drives a real context menu must `pytest.skip` when
+  `QApplication.platformName() == "wayland"` and cover the action through a
+  non-menu seam (`MainWindow._delete_name`).
 - `QFontMetrics` (not just `.horizontalAdvance`) used to segfault under
   `QT_QPA_PLATFORM=offscreen` for glyphs needing font fallback (`→`/`←` in
   help summaries and the RESULT readout, `☀`/`☾`/`◐` in the theme-mode icon),
