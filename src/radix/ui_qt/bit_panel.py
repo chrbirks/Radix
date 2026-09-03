@@ -596,6 +596,7 @@ class IntegerView(QWidget):
             value = QLabel("")
             value.setProperty("class", "laneValue")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # selectable text implies ClickFocus
             value.setWordWrap(True)  # BIN at 64-bit is ~80 chars wide; wrap at nibble gaps
             copy_btn = QPushButton("copy")
             copy_btn.setProperty("class", "copyBtn")

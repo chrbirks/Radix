@@ -200,3 +200,51 @@ def test_int_results_follow_notation() -> None:
     # The hex/bin display base still takes precedence over notation.
     session.int_base = "hex"
     assert session.format_value(value) == "0x98_9680"
+
+
+def test_float_views_single_rounds_the_exact_value_once() -> None:
+    from radix.engine.formatter import float_views
+
+    # Strictly above the midpoint between 1.0 and its float32 successor
+    # (1 + 2**-23). A detour through float64 would land *on* the midpoint,
+    # and ties-to-even would then pick 1.0 — the wrong single.
+    above_mid = 1 + mpmath.mpf(2) ** -24 + mpmath.mpf(2) ** -60
+    views = float_views(above_mid, 32)
+    assert views is not None and views.bits == 0x3F800001
+    # Exactly on the midpoint: ties to even, i.e. down to 1.0 ...
+    on_mid = 1 + mpmath.mpf(2) ** -24
+    views = float_views(on_mid, 32)
+    assert views is not None and views.bits == 0x3F800000
+    # ... and up when the lower neighbour has an odd mantissa.
+    on_mid_odd = 1 + mpmath.mpf(2) ** -23 + mpmath.mpf(2) ** -24
+    views = float_views(on_mid_odd, 32)
+    assert views is not None and views.bits == 0x3F800002
+
+
+def test_float_views_subnormals_round_once() -> None:
+    from radix.engine.formatter import float_views
+
+    # Subnormal singles are spaced 2**-149 apart. 2.5 quanta plus a hair is
+    # above the midpoint, so it must round to 3 quanta; a float64 detour drops
+    # the hair, lands on the tie, and rounds to the even 2 quanta.
+    single = mpmath.mpf(2) ** -149 * 2.5 + mpmath.mpf(2) ** -210
+    views = float_views(single, 32)
+    assert views is not None and views.bits == 0x00000003
+    assert views.exponent_text.startswith("0 (subnormal")
+    # Doubles (spaced 2**-1074 apart) double-round the same way through
+    # mpmath's own 53-bit conversion, so they get the same treatment.
+    double = mpmath.mpf(2) ** -1074 * 2.5 + mpmath.mpf(2) ** -1140
+    views = float_views(double, 64)
+    assert views is not None and views.bits == 0x0000000000000003
+    assert views.exponent_text.startswith("0 (subnormal")
+
+
+def test_auto_never_fabricates_integer_digits() -> None:
+    # 13 integer digits cannot all be shown at DISPLAY_DIGITS significant
+    # digits: plain notation would pad a made-up trailing 0 that reads as an
+    # exact integer. Such values switch to scientific notation instead.
+    assert format_real(mpmath.mpf("1234567890123.45"), "auto") == "1.23456789012e+12"
+    assert format_real(mpmath.mpf("1e12"), "auto") == "1e+12"
+    # 12 integer digits still fit, so these stay plain (rounded to 12 digits).
+    assert format_real(mpmath.mpf("123456789012.5"), "auto") == "123456789012"
+    assert format_real(mpmath.mpf("999999999999.4"), "auto") == "999999999999"

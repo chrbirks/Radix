@@ -13,6 +13,8 @@ so typing a full expression is never hijacked. Esc closes just the popup.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt
@@ -128,6 +130,10 @@ class Completer:
         self.active = False  # popup is showing (isVisible is false in unshown tests)
         self._span = (0, 0)  # start and length of the prefix being completed
         self._suppress = False
+        # (text, cursor) the popup last reacted to. rehighlight() re-emits
+        # textChanged with nothing changed, and a typed character arrives as
+        # textChanged *and* cursorPositionChanged; neither should count twice.
+        self._last_state: tuple[str, int] = ("", 0)
 
         # A plain child widget overlaying the window — never a top-level
         # window, so no WM focus/positioning games (Wayland-safe).
@@ -146,13 +152,26 @@ class Completer:
 
     # -- lifecycle ---------------------------------------------------------------
 
-    def suppress_next(self) -> None:
-        """Skip the popup for the next programmatic setText (history recall…)."""
+    @contextmanager
+    def suppressed(self) -> Iterator[None]:
+        """Keep the popup down across a programmatic edit (recall, inserts…).
+
+        Covers the whole edit rather than one signal: setText fires
+        textChanged and then cursorPositionChanged, and a one-shot flag let
+        the second of those reopen the popup on the recalled text.
+        """
         self._suppress = True
+        try:
+            yield
+        finally:
+            self._suppress = False
 
     def _on_change(self) -> None:
+        state = (self.input.text(), self.input.textCursor().position())
+        if state == self._last_state:
+            return
+        self._last_state = state
         if self._suppress:
-            self._suppress = False
             self.hide()
             return
         self.refresh()
@@ -249,9 +268,9 @@ class Completer:
         cursor = self.input.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(start + length, cursor.MoveMode.KeepAnchor)
-        self._suppress = True
-        cursor.insertText(completion.insert)
-        self.input.setTextCursor(cursor)
+        with self.suppressed():
+            cursor.insertText(completion.insert)
+            self.input.setTextCursor(cursor)
         self.hide()
 
     def _populate(self, matches: list[Completion]) -> None:

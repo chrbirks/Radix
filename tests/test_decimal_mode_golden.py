@@ -11,8 +11,9 @@ from __future__ import annotations
 import pytest
 
 from engine_harness import make_session, run
-from radix.engine.errors import CalcError
-from radix.engine.help import topic_help
+from radix.engine.errors import CalcError, IncompleteError, LexError
+from radix.engine.functions import FUNCTIONS
+from radix.engine.help import general_help_html, topic_help
 from radix.session import Session
 from radix.ui_qt.completer import completions
 
@@ -139,3 +140,53 @@ def test_completer_signature_uses_semicolon() -> None:
     session = Session(decimal_mode="comma")
     displays = {c.name: c.display for c in completions(session)}
     assert displays["fix"] == "fix(value; m; n)"
+
+
+# -- a decimal comma must be followed by a digit -------------------------------
+
+def test_comma_needs_a_digit_after_it() -> None:
+    # The classic typo: `,` between arguments in comma mode. It must not lex
+    # `1,` as 1.0 and then implicitly multiply by 2 (= sin(2) = 0.909…).
+    with pytest.raises(CalcError) as exc:
+        run("sin(1, 2)", **COMMA)
+    assert not isinstance(exc.value, IncompleteError)
+    assert "';'" in exc.value.message  # points at the separator that was meant
+    # A trailing comma at the end of the line is "still typing".
+    for text in ("1,", "sin(1,"):
+        with pytest.raises(IncompleteError):
+            run(text, **COMMA)
+    with pytest.raises(LexError):
+        run("1e5,5", **COMMA)
+    assert run("1,5 + 1", **COMMA) == "2,5"
+    assert run("sin(1,5)", **COMMA) == "0,997494986604"
+
+
+# -- help examples are written in the active syntax ---------------------------
+
+def test_help_examples_are_localized_to_comma_mode() -> None:
+    session = Session(decimal_mode="comma")
+    text = session.evaluate("help fix").help_text
+    assert text is not None
+    assert "fix(0,7071; 1; 15) = 0x5A82" in text  # decimal, separator; hex untouched
+    csr_text = session.evaluate("help csr").help_text
+    assert csr_text is not None and "csr(x; EN[7] CMD[3:0])" in csr_text
+    overview = session.evaluate("help").help_text
+    assert overview is not None
+    assert "4,7k = 4700" in overview and "1,5e-9" in overview
+    assert "e.g." in overview  # prose punctuation is not a decimal point
+    # The GUI pane builds its overview from the same sources, keyed on the separator.
+    assert "4,7k = 4700" in general_help_html(None, "; ")
+
+
+def test_every_help_example_evaluates_in_comma_mode() -> None:
+    session = Session(decimal_mode="comma")
+    for spec in FUNCTIONS.values():
+        text = session.evaluate(f"help {spec.name}").help_text
+        assert text is not None, spec.name
+        examples = [line for line in text.splitlines() if line.startswith("Example: ")]
+        # `help csr` shows the command block instead (its one-shot form is
+        # checked above); every other function must show a runnable example.
+        assert examples or spec.name == "csr", spec.name
+        for example in examples:
+            expression = example.removeprefix("Example: ").split(" = ")[0]
+            session.evaluate(expression, commit=False)  # must not raise

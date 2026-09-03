@@ -14,7 +14,7 @@ import json
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractSlider,
@@ -48,6 +48,7 @@ from radix.ui_qt.history_model import (
     HistoryEntry,
     HistoryModel,
     HistoryView,
+    split_assignment,
 )
 from radix.ui_qt.input_edit import InputBar
 from radix.ui_qt.inspector import Inspector
@@ -156,7 +157,7 @@ class MainWindow(QMainWindow):
         self._pane_hid_inspector = False
         self._help_overview_shown = False
         self._did_initial_show = False
-        self.last_result_text = ""
+        self._locked_value: Value | None = None  # the entry the inspector is locked on
         self.theme_mode = "auto"  # "auto" | "light" | "dark"
         self.on_theme_mode_changed: Callable[[], None] | None = None
 
@@ -220,6 +221,10 @@ class MainWindow(QMainWindow):
         self.help_pane = QTextEdit()
         self.help_pane.setObjectName("helpPane")
         self.help_pane.setReadOnly(True)
+        # Read-only still takes focus by default (for its own scrolling); a
+        # Tab or a click into the text then swallowed everything typed. The
+        # input line scrolls it instead (_scroll_overlay_pane).
+        self.help_pane.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Wrap to the viewport. The bulk of the document is HTML tables, whose
         # columns stay aligned while the summary cell wraps — so wrapping costs
         # nothing there and saves the reader ~400px of horizontal scrolling.
@@ -262,6 +267,9 @@ class MainWindow(QMainWindow):
         self.result_label.setObjectName("resultValue")
         self.result_label.setProperty("dimmed", "true")
         self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # Selectable text silently switches a QLabel to ClickFocus, so a click
+        # to copy the readout left the input line deaf until clicked back.
+        self.result_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.result_label.setWordWrap(True)
 
         self.input_bar = InputBar()
@@ -351,7 +359,7 @@ class MainWindow(QMainWindow):
             self._refresh_result_label()
             s = app_settings()
             geometry = s.value("geometry")
-            if geometry is not None:
+            if isinstance(geometry, (bytes, QByteArray)):  # a hand-edited INI can hold anything
                 self.restoreGeometry(geometry)
             if s.value("always_on_top", False, type=bool):
                 self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -493,20 +501,8 @@ class MainWindow(QMainWindow):
             return
         if outcome.kind == "del":
             self.input.clear()
-            self._toast(f"deleted {outcome.target}")
-            self._refresh_vars_pane()
-            shown = self.intview.csr
-            if shown is not None and shown.name == outcome.target:
-                # The layout on show no longer resolves by name: drop it so a
-                # bit edit can't write back `NAME(0x..)` for a deleted csr.
-                self.intview.show_value(
-                    self.intview.scratch if self.intview.active else None,
-                    self.session.word_size,
-                    self.session.signed,
-                    csr=None,
-                )
-            if self.store is not None:
-                save_state(self.session)
+            assert outcome.target is not None
+            self._after_delete(outcome.target)
             return
         if outcome.kind == "csr":
             self.input.clear()
@@ -520,6 +516,7 @@ class MainWindow(QMainWindow):
             return
         if outcome.kind == "clear":
             self.model.clear()
+            self._refresh_result_label()
             if self.store is not None:
                 self.store.clear()
             self.input.clear()
@@ -535,12 +532,6 @@ class MainWindow(QMainWindow):
         primary = self.session.format_value(outcome.value)
         prefix = f"{outcome.target} ← " if outcome.kind == "assign" else ""
         display = prefix + primary
-        self.last_result_text = primary
-        self.result_label.setText(display)
-        self.result_label.setProperty("dimmed", "false")
-        style = self.result_label.style()
-        style.unpolish(self.result_label)
-        style.polish(self.result_label)
         self.model.append(
             HistoryEntry(
                 text.strip(),
@@ -551,6 +542,7 @@ class MainWindow(QMainWindow):
                 timestamp=time.time(),
             )
         )
+        self._refresh_result_label()
         if self.store is not None:
             self.store.append(
                 text.strip(),
@@ -789,8 +781,8 @@ class MainWindow(QMainWindow):
             self.recall_index = None
             self.input.clear()
             return
-        self.completer.suppress_next()  # recalled text must not pop completions
-        self.input.setText(entries[self.recall_index].expression)
+        with self.completer.suppressed():  # recalled text must not pop completions
+            self.input.setText(entries[self.recall_index].expression)
 
     def _history_context_menu(self, pos: QPoint) -> None:
         index = self.history_view.indexAt(pos)
@@ -825,7 +817,7 @@ class MainWindow(QMainWindow):
         entry = self.model.entries[row]
         clipboard = QApplication.clipboard()
         if action == "copy_result":
-            text = entry.result[len(entry.prefix):] if entry.prefix else entry.result
+            _name, text = split_assignment(entry.result, entry.prefix)
             clipboard.setText(text)
             self._toast(f"copied {text}")
         elif action == "copy_expression":
@@ -839,6 +831,7 @@ class MainWindow(QMainWindow):
             self._set_input(entry.expression)
         elif action == "delete":
             self.model.remove(row)
+            self._refresh_result_label()
             self._persist_history()
             self._toast("entry deleted")
         elif action == "pin" and entry.value is not None:
@@ -876,18 +869,20 @@ class MainWindow(QMainWindow):
         if entry.value is None:  # disk-loaded entry: nothing to inspect
             return
         self._inspect_locked = True
+        self._locked_value = entry.value
         self.history_view.setCurrentIndex(index)  # type: ignore[arg-type]
         self._panel_follow(entry.value)
 
     def _clear_inspect_lock(self, follow_ans: bool) -> None:
         self._inspect_locked = False
+        self._locked_value = None
         self.history_view.clearSelection()
         if follow_ans:
             self._panel_follow(self.session.ans)
 
     def _set_input(self, text: str) -> None:
-        self.completer.suppress_next()
-        self.input.setText(text)
+        with self.completer.suppressed():
+            self.input.setText(text)
         self.input.setFocus()
 
     # -- channels rack ------------------------------------------------------------
@@ -966,18 +961,39 @@ class MainWindow(QMainWindow):
             csr=self.intview.csr,
         )
         self._update_preview()
+        if self._inspect_locked:
+            # The carry-through above kept a locked entry's *old* rendering
+            # (a 32-bit float view under a 64-bit chip, a float view after
+            # FLOAT OFF); the empty-input preview leaves a locked panel alone,
+            # so re-derive it from the entry itself.
+            self._panel_follow(self._locked_value)
 
     def _reformat_history(self) -> None:
         """Re-render history results under the current display settings."""
         self.model.reformat(self.session.format_value)
 
     def _refresh_result_label(self) -> None:
-        """Sync the RESULT readout with the (possibly just-reformatted) last entry."""
+        """The RESULT readout is the last history entry, or the dimmed dash
+        when there is none — the one place the readout text is decided."""
+        if self.model.entries:
+            self._set_readout(self.model.entries[-1].result, dimmed=False)
+        else:
+            self._set_readout("—", dimmed=True)
+
+    def _set_readout(self, text: str, dimmed: bool) -> None:
+        self.result_label.setText(text)
+        self.result_label.setProperty("dimmed", "true" if dimmed else "false")
+        style = self.result_label.style()
+        style.unpolish(self.result_label)
+        style.polish(self.result_label)
+
+    def _last_result_text(self) -> str:
+        """What Ctrl+Shift+C copies: the readout's value, minus any `x ← `."""
         if not self.model.entries:
-            return
+            return ""
         last = self.model.entries[-1]
-        self.result_label.setText(last.result)
-        self.result_label.setProperty("dimmed", "false")
+        _name, text = split_assignment(last.result, last.prefix)
+        return text
 
     def _refresh_status(self) -> None:
         session = self.session
@@ -1147,8 +1163,8 @@ class MainWindow(QMainWindow):
         if not name:
             return
         text = f"{name}(" if name in self.session.csrs else name
-        self.completer.suppress_next()
-        self.input.insertPlainText(text)
+        with self.completer.suppressed():
+            self.input.insertPlainText(text)
         self.input.setFocus()
 
     def _vars_context_menu(self, pos: QPoint) -> None:
@@ -1159,21 +1175,43 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         delete = menu.addAction(f"delete {name}")
         if menu.exec(self.vars_pane.mapToGlobal(pos)) is delete:
-            if name in self.session.variables:
-                del self.session.variables[name]
-            else:
-                del self.session.csrs[name]
-            self._refresh_vars_pane()
-            self._toast(f"deleted {name}")
+            self._delete_name(name)
+
+    def _delete_name(self, name: str) -> None:
+        """Delete a variable or csr the same way a typed `del NAME` does."""
+        try:
+            self.session.evaluate(f"del {name}")
+        except CalcError as exc:
+            self._toast(exc.message)
+            return
+        self._after_delete(name)
+
+    def _after_delete(self, name: str) -> None:
+        self._toast(f"deleted {name}")
+        self._refresh_vars_pane()
+        shown = self.intview.csr
+        if shown is not None and shown.name == name:
+            # The layout on show no longer resolves by name: drop it so a
+            # bit edit can't write back `NAME(0x..)` for a deleted csr.
+            self.intview.show_value(
+                self.intview.scratch if self.intview.active else None,
+                self.session.word_size,
+                self.session.signed,
+                csr=None,
+            )
+        if self.store is not None:
+            save_state(self.session)
 
     def _clear_history_view(self) -> None:
         self.model.clear()
+        self._refresh_result_label()
         self._toast("history view cleared (variables kept — type clear to wipe)")
 
     def _copy_result(self) -> None:
-        if self.last_result_text:
-            QApplication.clipboard().setText(self.last_result_text)
-            self._toast(f"copied {self.last_result_text}")
+        text = self._last_result_text()
+        if text:
+            QApplication.clipboard().setText(text)
+            self._toast(f"copied {text}")
 
     def _toggle_always_on_top(self) -> None:
         on_top = not bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)

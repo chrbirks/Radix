@@ -18,6 +18,55 @@ ambiguity to resolve about major/minor/patch.
   The numeric result is the timestamp unchanged, so the hex/dec/bin views
   and bit grid keep working.
 
+### Fixed
+
+- Focus can no longer leave the input line. The help pane, the RESULT
+  readout and the HEX/DEC/BIN lanes all took focus on a click (the help pane
+  also on Tab), after which typing went nowhere and Esc stopped working
+  until the input was clicked again. Tab is now a no-op when the completer
+  popup isn't showing.
+- Recalling a history entry (Up/Down or a double-click), inserting a name
+  from the VARIABLES pane, and cycling the theme or decimal mode no longer
+  pop the completer on the existing text. The next Up used to navigate that
+  popup instead of recalling further.
+- Ctrl+Shift+C copies what the RESULT readout shows: after a base or
+  notation change it copied the value as first computed, on a restored
+  history it copied nothing, and after `clear` it kept copying the old
+  value. The readout itself now empties to the dimmed dash when the history
+  is cleared (`clear` or Ctrl+L) or its last entry is deleted, and the
+  previous entry's value moves up when a later one is deleted.
+- Changing a display setting while the inspector is locked on a history
+  entry re-renders that entry: Alt+W left a 32-bit float pattern under a
+  64-bit chip, and FLOAT OFF left the float view up.
+- Right-clicking a variable or csr in the VARIABLES pane and choosing
+  delete now goes through the same path as a typed `del NAME`: the deletion
+  is persisted (it used to come back on the next launch) and a csr layout
+  still shown in REGISTER is dropped so a bit edit can't write back a call
+  to a deleted csr.
+- A hand-edited `radix.ini` whose `geometry` isn't a byte string no longer
+  crashes the app at startup.
+- A history file that can't be read (a truncated multi-byte character from
+  a crash mid-write, a permissions problem, a directory at its path) no
+  longer prevents the app from starting: an undecodable byte spoils only
+  its own line, and an unreadable file loads as empty.
+- `float32()` and the FLOAT ON view round once, ties-to-even, at the
+  target precision instead of going through a 64-bit float first, which
+  double-rounded values just above a single-precision midpoint
+  (`float32(1 + 2**-24 + 2**-60)` gave 0x3F80_0000; it is 0x3F80_0001).
+  Subnormals of both widths are quantized to the format's smallest step.
+- Auto notation no longer pads a real with a fabricated 13th digit:
+  `1234567890123.45` showed as `1234567890120`, which reads as an exact
+  integer; it now switches to scientific notation one decade earlier.
+- A decimal point (or comma, in comma mode) must be followed by a digit.
+  The comma-mode typo `sin(1, 2)` used to read `1,` as 1.0 and quietly
+  return sin(2); it is now a lex error that suggests `;`. Likewise `1e5.5`
+  no longer means `1e5 × 0.5`, and `1.x` is no longer `1 × x`. A trailing
+  `1.` at the end of the line is treated as still being typed.
+- `help` examples follow the decimal mode: in comma mode `help fix` used
+  to show `fix(0.7071, 1, 15)`, which that mode rejects when typed; it now
+  shows `fix(0,7071; 1; 15)`, and the basics and command blocks are
+  localized the same way.
+
 ## [12] - 2026-08-23
 
 ### Changed

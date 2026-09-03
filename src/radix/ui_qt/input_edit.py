@@ -20,7 +20,6 @@ class InputEdit(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setTabChangesFocus(True)
         self._lock_height()
 
     def _lock_height(self) -> None:
@@ -47,6 +46,11 @@ class InputEdit(QPlainTextEdit):
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.submitted.emit()
+            return
+        if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            # Nothing else in the window takes focus, and a tab character has
+            # no place in an expression; the completer claims Tab before this
+            # when its popup is up.
             return
         mods = event.modifiers()
         if mods == Qt.KeyboardModifier.ControlModifier and self._handle_ctrl_key(event.key()):

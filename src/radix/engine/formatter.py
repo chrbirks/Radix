@@ -22,8 +22,11 @@ from radix.engine.values import Number, Value, magnitude_fits
 
 DISPLAY_DIGITS = 12
 # Plain notation is used in auto mode when the decimal exponent is in this range.
+# The upper bound keeps every integer digit shown a real one: with exponent 12
+# the integer part has 13 digits, one more than DISPLAY_DIGITS, and plain
+# notation would pad it with a fabricated 0 that reads as an exact integer.
 AUTO_PLAIN_MIN_EXP = -5
-AUTO_PLAIN_MAX_EXP = 12
+AUTO_PLAIN_MAX_EXP = DISPLAY_DIGITS - 1
 
 _SI_BY_EXP = {
     -15: "f", -12: "p", -9: "n", -6: "u", -3: "m",
@@ -70,11 +73,35 @@ class FloatViews:
 _FLOAT_FORMATS = {32: (">f", 8, 23, 127), 64: (">d", 11, 52, 1023)}
 
 
+def _round_to_format(value: Number, man_width: int, bias: int) -> float:
+    """``value`` rounded once, ties-to-even, to an IEEE format's precision.
+
+    Returns a Python float the format represents exactly (or ±inf beyond its
+    range), so ``struct.pack`` then converts it losslessly. Going through
+    ``float()`` first would round to 53 bits and then again to the format:
+    a value just above a single-precision midpoint lands *on* the midpoint
+    in the first step and rounds the wrong way in the second. Subnormals
+    carry fewer than ``man_width + 1`` significant bits, so they are
+    quantized to the format's smallest step instead.
+    """
+    x = mpmath.mpf(value)
+    if x == 0 or not mpmath.isfinite(x):
+        return float(x)
+    min_normal_exp = 1 - bias
+    if abs(x) < mpmath.mpf(2) ** min_normal_exp:
+        step = min_normal_exp - man_width  # 2**-149 (single), 2**-1074 (double)
+        quanta = int(mpmath.nint(mpmath.ldexp(x, -step)))  # nint: ties to even
+        rounded = math.ldexp(quanta, step)  # exact: |quanta| <= 2**man_width
+        return math.copysign(rounded, -1.0) if x < 0 else rounded
+    with mpmath.workprec(man_width + 1):
+        return float(mpmath.mpf(value))  # mpf(): re-rounds to the working precision
+
+
 def float_views(value: Number, word_size: int, decimal: str = ".") -> FloatViews | None:
     if word_size not in _FLOAT_FORMATS:
         return None
     pack, exp_width, man_width, bias = _FLOAT_FORMATS[word_size]
-    x = float(value)
+    x = _round_to_format(value, man_width, bias)
     try:
         bits = int.from_bytes(struct.pack(pack, x), "big")
     except OverflowError:  # magnitude beyond single precision: packs to inf

@@ -2406,16 +2406,72 @@ def test_truncation_note_hidden_on_the_empty_panel(qtbot, window: MainWindow) ->
 
 
 def test_vars_pane_csr_row_right_click_deletes(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """Drives the real context menu: the popup is picked by keyboard once
+    it is up, since ``QMenu.exec`` blocks until then."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMenu
+
     _define_ctrl_csr(qtbot, window)
-    assert "CTRL" in window.session.csrs
     window._show_vars()
     item = next(
         window.vars_pane.item(i)
         for i in range(window.vars_pane.count())
-        if "CTRL" in window.vars_pane.item(i).text()
+        if window.vars_pane.item(i).data(Qt.ItemDataRole.UserRole) == "CTRL"
     )
-    name = item.data(Qt.ItemDataRole.UserRole)
-    assert name == "CTRL"
-    del window.session.csrs[name]
-    window._refresh_vars_pane()
+    attempts = [0]
+
+    def choose_first_action() -> None:
+        menu = next((m for m in window.findChildren(QMenu) if m.isVisible()), None)
+        attempts[0] += 1
+        if menu is None:
+            if attempts[0] < 50:
+                QTimer.singleShot(20, choose_first_action)
+            return
+        QTest.keyClick(menu, Qt.Key.Key_Down)
+        QTest.keyClick(menu, Qt.Key.Key_Return)
+
+    QTimer.singleShot(20, choose_first_action)
+    window._vars_context_menu(window.vars_pane.visualItemRect(item).center())
     assert "CTRL" not in window.session.csrs
+    rows = [window.vars_pane.item(i).text() for i in range(window.vars_pane.count())]
+    assert not any("CTRL" in row for row in rows)
+
+
+def test_vars_pane_delete_persists_and_unbinds_panel_csr(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import QSettings
+
+    from radix.history.store import HistoryStore
+
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    store = HistoryStore(tmp_path / "history.jsonl")
+
+    win1 = MainWindow(Session(), LIGHT, store=store)
+    qtbot.addWidget(win1)
+    _submit(qtbot, win1, "x = 5")
+    _define_ctrl_csr(qtbot, win1)
+    _submit(qtbot, win1, "CTRL(0x80000005)")
+    assert win1.intview.csr is not None
+    win1._delete_name("x")
+    win1._delete_name("CTRL")
+    assert win1.intview.csr is None  # same unbinding as a typed `del CTRL`
+    win1.close()
+
+    win2 = MainWindow(Session(), LIGHT, store=store)
+    qtbot.addWidget(win2)
+    assert "x" not in win2.session.variables
+    assert "CTRL" not in win2.session.csrs
+
+
+def test_startup_survives_garbage_geometry_setting(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from PySide6.QtCore import QSettings
+
+    from radix.history.store import HistoryStore
+    from radix.ui_qt.settings import app_settings
+
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    app_settings().setValue("geometry", "abc")  # hand-edited radix.ini
+    store = HistoryStore(tmp_path / "history.jsonl")
+    win = MainWindow(Session(), LIGHT, store=store)  # must not raise
+    qtbot.addWidget(win)
+    assert win.session.word_size == 32

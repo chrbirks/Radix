@@ -550,3 +550,23 @@ def test_csr_preview_has_no_side_effects() -> None:
     assert outcome.kind == "csr"
     assert outcome.target == "CTRL"
     assert outcome.help_text == "csr CTRL = EN[31]"
+
+
+# -- a decimal point must be followed by a digit ------------------------------------
+
+def test_decimal_point_needs_a_digit_after_it() -> None:
+    # A trailing point at the end of the line is "still typing", not an error.
+    for text in ("1.", "sin(1."):
+        with pytest.raises(IncompleteError):
+            run(text)
+    # Anywhere else it is a hard error — never a silent `1 × 2`.
+    for text in ("1. 2", "1.)", "sin(1., 2)"):
+        with pytest.raises(CalcError) as exc:
+            run(text)
+        assert not isinstance(exc.value, IncompleteError), text
+    # A point after the exponent is malformed: 1e5.5 is not 1e5 × 0.5.
+    with pytest.raises(LexError):
+        run("1e5.5")
+    assert run("1.5") == "1.5"
+    assert run(".5") == "0.5"
+    assert run("1.5e-9") == "1.5e-9"

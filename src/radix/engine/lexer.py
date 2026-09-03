@@ -18,6 +18,11 @@ Disambiguation rules (the spec — see plan and tests):
   lowercase prefix is a valid digit of that base (plus ``_``). Like the SI
   rule, the literal reading always wins, so ``b1`` or ``x0`` cannot be
   variable names; ``bad`` or ``h2o`` are ordinary identifiers.
+- A decimal char binds into a number only when a digit follows it. At the
+  very end of the line ``1.`` is *incomplete* (the fraction is still being
+  typed); anywhere else it is a malformed number, so the comma-mode typo
+  ``sin(1, 2)`` errors instead of quietly reading as ``sin(1) × 2``, and
+  ``1e5.5`` is not ``1e5 × 0.5``.
 
 Suffixed decimal literals are computed exactly via Fraction, so ``4.7k`` is the
 exact int 4700 and stays usable with bitwise operators.
@@ -32,7 +37,7 @@ from fractions import Fraction
 import mpmath
 
 from radix.engine import numsyntax
-from radix.engine.errors import LexError, Span
+from radix.engine.errors import CalcError, IncompleteError, LexError, Span
 from radix.engine.numsyntax import NumSyntax
 from radix.engine.values import Number
 
@@ -84,8 +89,6 @@ def _decimal_to_number(mantissa: str, exp10: int, decimal_inputs: str = ".") -> 
     normalized = mantissa.replace("_", "")
     if normalized.startswith("."):
         normalized = "0" + normalized
-    if normalized.endswith("."):
-        normalized += "0"
     frac = Fraction(normalized) * Fraction(10) ** exp10
     if frac.denominator == 1:
         return int(frac)
@@ -136,22 +139,53 @@ class Lexer:
             self.pos += 1
         return self.text[begin : self.pos]
 
+    def _mantissa(self) -> str:
+        """Digits and ``_``; a decimal char only when a digit follows it."""
+        begin = self.pos
+        decimals = self.syntax.decimal_inputs
+        while True:
+            ch = self._peek()
+            if ch.isdigit() or ch == "_":
+                self.pos += 1
+            elif ch and ch in decimals and self._peek(1).isdigit():
+                self.pos += 2
+            else:
+                return self.text[begin : self.pos]
+
     def _number(self, start: int) -> Token:
         if self._peek() == "0" and self._peek(1) in ("x", "X", "b", "B", "o", "O"):
             return self._based_number(start)
         decimals = self.syntax.decimal_inputs
-        mantissa = self._take_while(lambda c: c.isdigit() or c == "_" or c in decimals)
+        mantissa = self._mantissa()
         # HDL sized literal: width'hFF etc.
         if self._peek() == "'" and self._peek(1).lower() in _HDL_BASES:
             return self._hdl_number(start, mantissa)
         # Exponent: e/E only when followed by digits or sign+digits.
+        has_exponent = False
         if self._peek() in ("e", "E"):
             after = self._peek(1)
             if after.isdigit() or (after in ("+", "-") and self._peek(2).isdigit()):
+                has_exponent = True
                 self.pos += 1  # e
                 if self._peek() in ("+", "-"):
                     self.pos += 1
                 self._take_while(str.isdigit)
+        trailing = self._peek()
+        if trailing and trailing in decimals:
+            # A decimal char the mantissa did not absorb: no digit follows it.
+            # Only a first point at the very end of the line can still become a
+            # number (`1.` → `1.5`); `1e5.5`, `1.5.`, `1. 2` never can.
+            self.pos += 1
+            span = Span(start, self.pos)
+            if self._peek() == "" and not has_exponent and not any(c in decimals for c in mantissa):
+                raise IncompleteError(f"incomplete number {self.text[start:self.pos]!r}", span)
+            self._take_while(lambda c: c.isdigit() or c in decimals)
+            hint = f" — use {self.syntax.arg_sep!r} between arguments" if trailing == "," else ""
+            raise LexError(
+                f"malformed number {self.text[start:self.pos]!r}: "
+                f"a digit must follow {trailing!r}{hint}",
+                Span(start, self.pos),
+            )
         literal_text = self.text[start : self.pos]
         try:
             marker = "e" if "e" in literal_text else "E"
@@ -278,7 +312,7 @@ def tokenize_prefix(text: str, syntax: NumSyntax = numsyntax.DEFAULT) -> list[To
     while True:
         try:
             tok = lexer._next()
-        except LexError:
+        except CalcError:  # LexError, or IncompleteError for a trailing `1.`
             return out
         if tok.kind == "EOF":
             return out

@@ -169,13 +169,12 @@ class Session:
         if word == "help":
             if rest.startswith("="):
                 return None  # `help = ...` is an assignment attempt → reserved-name error
-            arg_sep = self.decimal_syntax.arg_sep + " "
             if rest:
-                text = help_mod.topic_help(rest, arg_sep)
+                text = help_mod.topic_help(rest, syntax=self.decimal_syntax)
                 if text is None:
                     text = f"no help for {rest!r} — try plain `help` for the overview"
             else:
-                text = help_mod.general_help(arg_sep=arg_sep)
+                text = help_mod.general_help(syntax=self.decimal_syntax)
             # target carries the topic so the GUI can tell overview from topic.
             return Outcome("help", target=rest or None, help_text=text)
         if word == "clear" and not rest:

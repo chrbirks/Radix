@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from radix.engine.functions import FUNCTIONS
 from radix.engine.help import general_help, topic_help
+from radix.session import Session
 
 
 def test_general_help_is_categorized_with_signatures() -> None:
@@ -51,3 +52,10 @@ def test_topic_help_csr() -> None:
 def test_general_help_contains_csr() -> None:
     text = general_help()
     assert "csr" in text
+
+
+def test_every_function_example_evaluates() -> None:
+    session = Session()
+    for spec in FUNCTIONS.values():
+        expression = spec.example.split(" = ")[0]
+        session.evaluate(expression, commit=False)  # must not raise

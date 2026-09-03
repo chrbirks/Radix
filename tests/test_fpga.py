@@ -331,3 +331,10 @@ def test_help_covers_fpga_functions() -> None:
     assert text is not None and "clog2(300)" in text
     overview = session.evaluate("help").help_text
     assert overview is not None and "fix" in overview and "period" in overview
+
+
+def test_float32_rounds_the_exact_value_not_a_float64_detour() -> None:
+    # Strictly above the midpoint between 1.0 and the next single: rounds up.
+    # Via float64 the tail would be lost first, leaving a tie that rounds down.
+    assert run_number("float32(1 + 2**-24 + 2**-60)") == 0x3F80_0001
+    assert run_number("float32(1 + 2**-24)") == 0x3F80_0000  # exact tie: to even

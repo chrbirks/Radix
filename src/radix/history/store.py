@@ -8,7 +8,9 @@ also persisted (alongside `prefix`, the assignment badge text) via
 `value_to_json`, so entries can still reformat on a base/notation change after
 a restart — reals round-trip bit-exact, same as session state does. Older
 files stored `value` as a bare int (int-valued entries only); those still load.
-Corrupt lines are skipped, never fatal.
+Corrupt lines are skipped, never fatal; an unreadable, undecodable or
+missing file loads as empty. Writes (`append`/`rewrite`/`clear`) still raise
+OSError so the caller can report the failure instead of silently losing it.
 """
 
 from __future__ import annotations
@@ -55,10 +57,16 @@ class HistoryStore:
         self.path = path or default_path()
 
     def load(self) -> list[StoredEntry]:
-        if not self.path.exists():
+        try:
+            # errors="replace": a truncated multi-byte char (crash mid-write)
+            # corrupts only its own line instead of discarding the whole file.
+            text = self.path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            # Missing, unreadable (permissions) or a directory: load is called
+            # at start-up, so never let the history file block the app.
             return []
         entries: list[StoredEntry] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        for line in text.splitlines():
             try:
                 raw = json.loads(line)
                 entries.append(
@@ -111,5 +119,4 @@ class HistoryStore:
                 fh.write(json.dumps(record) + "\n")
 
     def clear(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
+        self.path.unlink(missing_ok=True)

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import json
 from pathlib import Path
 
 import mpmath
+import pytest
 
 from radix.engine.values import Value
 from radix.history.store import HistoryStore, StoredEntry
@@ -106,3 +108,35 @@ def test_rewrite_persists_value_and_prefix(tmp_path: Path) -> None:
     assert entries[0].value is not None
     assert entries[0].value.number == 255
     assert entries[0].prefix == "x ← "
+
+
+def test_load_survives_invalid_utf8_and_keeps_valid_lines(tmp_path: Path) -> None:
+    # A crash mid-write can leave a truncated multi-byte character behind;
+    # that must not take the whole history (or the app start-up) down with it.
+    path = tmp_path / "history.jsonl"
+    path.write_bytes(b'{"expression":"1","result":"1"}\n\xff\xfe\n')
+    entries = HistoryStore(path).load()
+    assert [(e.expression, e.result) for e in entries] == [("1", "1")]
+
+
+def test_load_directory_at_path_returns_empty(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.mkdir()
+    assert HistoryStore(path).load() == []
+
+
+def test_load_unreadable_file_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "history.jsonl"
+    HistoryStore(path).append("1+1", "2")
+    original_open = Path.open
+
+    def deny_open(self: Path, *args: object, **kwargs: object) -> object:
+        if self == path:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    # Monkeypatch rather than chmod 000: chmod is a no-op when tests run as root.
+    monkeypatch.setattr(Path, "open", deny_open)
+    assert HistoryStore(path).load() == []
