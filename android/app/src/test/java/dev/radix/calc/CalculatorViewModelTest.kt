@@ -102,6 +102,20 @@ class CalculatorViewModelTest {
     }
 
     @Test
+    fun `an engine error keeps the last good result for the card`() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.insert("1")
+        advanceUntilIdle()
+        bridge.responses["preview"] = { FakeBridge.errorPayload("expected an expression", incomplete = true) }
+
+        vm.insert("+")
+        advanceUntilIdle()
+
+        assertEquals("error", vm.state.value.result?.kind)
+        assertEquals("42", vm.state.value.card?.text)
+    }
+
+    @Test
     fun `an internal error becomes a toast and leaves the last result alone`() = runTest(dispatcher) {
         val vm = viewModel()
         vm.insert("1")
@@ -150,6 +164,7 @@ class CalculatorViewModelTest {
 
         assertEquals("", vm.state.value.input)
         assertNull(vm.state.value.result)
+        assertNull(vm.state.value.card)
     }
 
     @Test

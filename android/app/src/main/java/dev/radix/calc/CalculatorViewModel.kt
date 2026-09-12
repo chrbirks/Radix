@@ -22,6 +22,10 @@ data class UiState(
     val cursor: Int = 0,
     /** Live preview of the line, or the last committed result once the line is empty. */
     val result: ResultPayload? = null,
+    /** What the result card paints: the last int/real/info payload. Survives an
+     *  error on the line (including the "still typing" incompletes), so the
+     *  register doesn't blank between keystrokes. */
+    val card: ResultPayload? = null,
     val history: List<HistoryEntry> = emptyList(),
     val modes: Modes = Modes(),
     val functions: List<FnGroup> = emptyList(),
@@ -88,7 +92,7 @@ class CalculatorViewModel(
     fun clear() {
         previewJob?.cancel()
         shownExpression = null
-        _state.update { it.copy(input = "", cursor = 0, result = null, fieldReadout = null) }
+        _state.update { it.copy(input = "", cursor = 0, result = null, card = null, fieldReadout = null) }
         scheduleRefresh(previewToo = false)
     }
 
@@ -128,7 +132,7 @@ class CalculatorViewModel(
                         _state.update { it.copy(suggestions = suggestions) }
                     } else {
                         shownExpression = text
-                        _state.update { it.copy(result = result, suggestions = suggestions, modes = result.modes) }
+                        _state.update { it.withResult(result).copy(suggestions = suggestions) }
                     }
                 } else {
                     _state.update { it.copy(suggestions = suggestions) }
@@ -156,9 +160,8 @@ class CalculatorViewModel(
                 val history = client.history()
                 val suggestions = client.suggest("", 0)
                 _state.update {
-                    it.copy(
-                        input = "", cursor = 0, result = result, history = history,
-                        modes = result.modes, suggestions = suggestions, fieldReadout = null,
+                    it.withResult(result).copy(
+                        input = "", cursor = 0, history = history, suggestions = suggestions, fieldReadout = null,
                     )
                 }
                 persist(client.stateJson())
@@ -182,7 +185,7 @@ class CalculatorViewModel(
                 val shown = _state.value.input.takeIf { it.isNotBlank() } ?: shownExpression
                 if (shown != null) {
                     val result = client.preview(shown)
-                    if (!result.isInternalError) _state.update { it.copy(result = result) }
+                    if (!result.isInternalError) _state.update { it.withResult(result) }
                 }
                 val history = client.history()
                 _state.update { it.copy(history = history) }
@@ -204,7 +207,7 @@ class CalculatorViewModel(
                 val line = result.input ?: return@bridge
                 shownExpression = line
                 _state.update {
-                    it.copy(input = line, cursor = line.length, result = result, fieldReadout = null)
+                    it.withResult(result).copy(input = line, cursor = line.length, fieldReadout = null)
                 }
             }
         }
@@ -262,6 +265,11 @@ class CalculatorViewModel(
     }
 
     // -- plumbing --------------------------------------------------------------------
+
+    /** Errors update `result` only; anything else also becomes the card and carries the modes. */
+    private fun UiState.withResult(result: ResultPayload): UiState =
+        if (result.isError) copy(result = result)
+        else copy(result = result, card = result, modes = result.modes)
 
     private fun toast(message: String?) = _state.update { it.copy(toast = message ?: "internal: unknown error") }
 

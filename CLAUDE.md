@@ -14,6 +14,8 @@ uv run mypy                                         # strict on radix.engine.*
 uv run radix                                        # launch GUI
 uv run radix -e "0xFF << 2"                         # one-shot CLI (no display)
 uv run pyinstaller packaging/radix.spec             # frozen build into dist/
+cd android && ./gradlew test                        # Android ViewModel unit tests (JDK 17 + SDK)
+cd android && ./gradlew assembleDebug               # arm64 APK; -Pradix.abi=x86_64 for an emulator
 ```
 
 All three checks must pass before committing. Everything runs through `uv` —
@@ -36,6 +38,15 @@ diagnostics.
   commit=False)` is the side-effect-free preview path.
 - `src/radix/ui_qt/` — the UI only calls `Session.evaluate` and renders
   the result; it never computes math itself.
+- `src/radix/bridge.py` — Qt-free JSON adapter the Android app calls
+  (`rpc(bridge, method, args_json)`); must stay importable without PySide6
+  (`tests/test_bridge.py` checks). Every string the phone paints — nibbles,
+  hex/dec/bin, notes, error spans, field readouts — is produced here.
+- `android/` — Kotlin/Compose front-end; Chaquopy bundles `src/` by path.
+  `CalculatorViewModel` owns the input line and serialises all bridge calls
+  on one dispatcher; composables under `ui/` only paint `UiState`. Unit tests
+  run against a scripted `FakeBridge`; `BridgeSmokeTest` boots the real
+  interpreter on a device.
 - Rich result graphics ride the `Value.viz` channel: engine functions attach
   a frozen payload from `engine/viz.py` (`FixedPointViz`/`ClockViz`/`MemViz` —
   numbers *and* pre-formatted text computed engine-side), and
@@ -75,6 +86,12 @@ diagnostics.
   authoritative.
 - No git remote is configured, so CI (including the Windows PyInstaller leg)
   has never run; the frozen build is verified locally on Linux only.
+- Android: `connectedDebugAndroidTest` uninstalls the app afterwards (history
+  and state gone), so reinstall before adb-driven UI checks. Verify UI
+  changes on the headless emulator with `adb exec-out screencap -p` and
+  `input tap` — setup and the disk/AVD gotchas are in `android/README.md`.
+  Changed-bit outlines on the phone diff *committed* results only (plus a
+  toggle's own bit), deliberately unlike the desktop's per-preview diff.
 - The app icon (radical-sign mark, `#2563eb` tile) lives at
   `src/radix/ui_qt/icons/icon.png` (runtime, via `theme.load_app_icon()`) and
   `packaging/icon.ico` (PyInstaller `EXE(icon=...)`, Windows/macOS only —

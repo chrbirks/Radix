@@ -7,6 +7,26 @@ Versions are a simple incrementing integer (1, 2, 3, …), not semantic
 versioning — there's one user, no external API to keep compatible, and no
 ambiguity to resolve about major/minor/patch.
 
+## [Unreleased]
+
+### Added
+
+- Android front-end (`android/`, personal sideload — not set up for the Play
+  Store): a touch-first Jetpack Compose UI over the unchanged Python engine,
+  embedded with Chaquopy. A fixed 6×6 keypad puts A–F and the bit operators
+  next to the digits; `SI`, `[ ]` and `fn` open small sheets (the function
+  sheet is generated from the engine's own tables); `abc` summons the system
+  keyboard for typed names. Integer results render as a nibble-hero register
+  (each hex digit above its four bits — tap toggles a bit, drag reads a
+  field), reals as a large readout; HISTORY and MODES live behind a segmented
+  row. Word size and signedness are tappable status chips. Comma mode is
+  fixed. Design: `docs/superpowers/specs/2026-09-12-android-touch-ui-design.md`.
+- `radix.bridge`: the Qt-free JSON adapter the Android app calls — result
+  payloads (nibbles, hex/dec/bin, notes, error spans), bit toggling and range
+  readouts on an unmasked scratch, history via `HistoryStore`, the function
+  catalog, MRU/prefix suggestions, and state round-trip behind a
+  never-raising `rpc()` entry point.
+
 ## [13] - 2026-09-06
 
 ### Added

@@ -176,6 +176,18 @@ separator, always-on-top, window geometry — persist across restarts in a plain
 as JSONL in the platform user-data directory and recalled entries
 re-evaluate through the live engine.
 
+## Android (personal build)
+
+`android/` holds a touch-first front-end over the same engine, embedded with
+[Chaquopy](https://chaquo.com/chaquopy/) and bundled straight from `src/` —
+no copy step, so an engine change is in the next build. It is a personal
+sideload (debug-signed, arm64-v8a), not a Play Store app. A custom keypad
+replaces the keyboard: A–F and the bit operators sit next to the digits,
+`SI`/`[ ]`/`fn` open small sheets, and `abc` brings up the system keyboard
+for typed names. Integer results show a nibble-hero register — each hex digit
+directly above its four bits; tap a bit to toggle it, drag to read a field.
+Build and install instructions: [android/README.md](android/README.md).
+
 ## Development
 
 ```sh

@@ -213,11 +213,15 @@ def test_toggle_bit_marks_changed(bridge: Bridge) -> None:
     assert bridge.toggle_bit(4)["changed"] == [4]
 
 
-def test_changed_bits_between_results(bridge: Bridge) -> None:
+def test_changed_bits_diff_committed_results_only(bridge: Bridge) -> None:
+    # Keystroke previews diff against nothing (typing 0xDEADBEEF digit by digit
+    # would otherwise outline half the register); commits diff against the
+    # previous commit, and a toggle marks its own bit.
     bridge.evaluate("0b0001")
-    assert bridge.preview("0b0011")["changed"] == [1]
-    assert bridge.preview("0b0011")["changed"] == [1]  # same value: diff is kept
-    assert bridge.preview("0b0111")["changed"] == [2]
+    assert bridge.preview("0b0011")["changed"] == []
+    assert bridge.evaluate("0b0011")["changed"] == [1]
+    assert bridge.preview("0b0111")["changed"] == []
+    assert bridge.evaluate("0b0111")["changed"] == [2]
 
 
 def test_toggle_without_integer_is_an_error(bridge: Bridge) -> None:
@@ -314,3 +318,11 @@ def test_rpc_never_raises(bridge: Bridge) -> None:
     assert bad_args["kind"] == "error"
     bad_mode = json.loads(rpc(bridge, "set_mode", '{"name":"word_size","value":7}'))
     assert bad_mode["kind"] == "error" and "word_size" in bad_mode["message"]
+
+
+def test_suggest_ignores_hex_and_si_literals(bridge: Bridge) -> None:
+    # `0xBEEF` and `4k` end in letters but are numbers to the lexer: no prefix
+    # filtering, the strip keeps its most-recently-used chips.
+    assert len(bridge.suggest("0xBEEF", 6)) == 12
+    assert len(bridge.suggest("4k", 2)) == 12
+    assert len(bridge.suggest("1 + cl", 6)) < 12

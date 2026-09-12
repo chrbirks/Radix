@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Radix" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#2C3E50</item>
+        <item name="android:statusBarColor">#2C3E50</item>
+        <item name="android:navigationBarColor">#2C3E50</item>
+    </style>
+</resources>

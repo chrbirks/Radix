@@ -25,9 +25,10 @@ android {
         versionName = radixVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            // Personal sideload: one ABI keeps the APK small. Add "x86_64" for
-            // an emulator.
-            abiFilters += listOf("arm64-v8a")
+            // Personal sideload: one ABI keeps the APK small. Override for an
+            // emulator with `-Pradix.abi=x86_64` (comma-separate for several).
+            val abis = (project.findProperty("radix.abi") as String?)?.split(",") ?: listOf("arm64-v8a")
+            abiFilters += abis
         }
     }
 

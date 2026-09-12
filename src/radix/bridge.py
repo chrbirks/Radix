@@ -15,7 +15,6 @@ anything else as an ``internal:`` error, so bad input can't crash the app.
 from __future__ import annotations
 
 import json
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -30,7 +29,6 @@ from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Outcome, Session
 Payload = dict[str, Any]
 
 _INFO_KINDS = frozenset({"help", "vars", "csr", "clear", "del"})
-_IDENT_TAIL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
 _MRU_LIMIT = 24
 
 
@@ -59,10 +57,12 @@ class Bridge:
         self.store = HistoryStore(Path(files_dir) / "history.jsonl")
         self._entries: list[StoredEntry] = self.store.load()
         # Mirrors ui_qt/bit_panel.py: the scratch stays *unmasked* so cycling
-        # the word size never destroys upper bits; `_changed` is the XOR against
-        # the previously shown value, kept across same-value re-renders.
+        # the word size never destroys upper bits. Unlike the desktop, changed
+        # bits are diffed between *committed* results only (plus a toggle's own
+        # bit): keystroke previews on a phone would otherwise outline half the
+        # register while a literal is being typed.
         self._scratch: int | None = None
-        self._changed = 0
+        self._last_committed: int | None = None
         self._mru: list[str] = []  # function names, most recently committed first
         if state_json is not None:
             self.load_state(state_json)
@@ -111,7 +111,7 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=False)
         except CalcError as exc:
             return self._error(exc)
-        return self._payload(outcome)
+        return self._payload(outcome, changed=0)
 
     def evaluate(self, text: str) -> Payload:
         """Commit one line: variables, ``ans`` and history change here only."""
@@ -119,7 +119,13 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=True)
         except CalcError as exc:
             return self._error(exc)
-        payload = self._payload(outcome)
+        changed = 0
+        number = outcome.value.number if outcome.value is not None else None
+        if isinstance(number, int):
+            if self._last_committed is not None:
+                changed = number ^ self._last_committed
+            self._last_committed = number
+        payload = self._payload(outcome, changed=changed)
         if outcome.kind == "clear":
             self.clear_history()
         elif outcome.value is not None:
@@ -153,7 +159,7 @@ class Bridge:
             "modes": self.modes(),
         }
 
-    def _payload(self, outcome: Outcome) -> Payload:
+    def _payload(self, outcome: Outcome, changed: int) -> Payload:
         s = self.session
         p: Payload = {
             "kind": "empty",
@@ -182,22 +188,15 @@ class Bridge:
             return p
         number = value.number
         assert isinstance(number, int)
-        self._follow(number)
+        self._scratch = number  # the grid edits whatever is shown, previewed or committed
         p["kind"] = "int"
         p["hex"] = views.hex
         p["dec"] = views.dec_signed if s.signed else views.dec_unsigned
         p["bin"] = views.binary
         p["nibbles"] = _nibbles(views.hex)
         p["truncated"] = views.truncated
-        p["changed"] = _set_bits(self._changed, s.word_size)
+        p["changed"] = _set_bits(changed, s.word_size)
         return p
-
-    def _follow(self, number: int) -> None:
-        if self._scratch is None:
-            self._changed = 0  # first value after a grey spell: no diff to show
-        elif number != self._scratch:
-            self._changed = number ^ self._scratch
-        self._scratch = number
 
     # -- bit editing ---------------------------------------------------------
 
@@ -217,7 +216,6 @@ class Bridge:
         payload = self.preview(literal)
         payload["input"] = literal
         payload["changed"] = [bit]
-        self._changed = 1 << bit
         return payload
 
     def field(self, hi: int, lo: int) -> Payload:
@@ -279,13 +277,23 @@ class Bridge:
     def suggest(self, text: str, cursor: int, limit: int = 12) -> list[Payload]:
         """Chips for the fn strip: prefix matches while an identifier is being
         typed, otherwise most-recently-used functions first."""
-        match = _IDENT_TAIL.search(text[:cursor])
-        if match:
-            prefix = match.group()
+        prefix = self._identifier_prefix(text[:cursor])
+        if prefix is not None:
             names = [name for name in FUNCTIONS if name.startswith(prefix)]
         else:
             names = self._mru + [name for name in FUNCTIONS if name not in self._mru]
         return [{"name": name, "insert": name + "("} for name in names[:limit]]
+
+    def _identifier_prefix(self, head: str) -> str | None:
+        """The identifier being typed at the end of ``head``, by the lexer's own
+        rules — so ``0xBEEF`` and ``4k`` are numbers, not half-typed names."""
+        tokens = tokenize_prefix(head, self.session.decimal_syntax)
+        if not tokens:
+            return None
+        last = tokens[-1]
+        if last.kind == "IDENT" and last.span.end == len(head):
+            return last.text
+        return None
 
     def _remember_functions(self, text: str) -> None:
         for token in tokenize_prefix(text, self.session.decimal_syntax):
