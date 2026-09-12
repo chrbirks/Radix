@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose paints everything; the platform theme only needs to stay out
+         of the way (no action bar, dark ground so the first frame doesn't flash). -->
+    <style name="Theme.Radix" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#11141A</item>
+        <item name="android:statusBarColor">#11141A</item>
+        <item name="android:navigationBarColor">#11141A</item>
+    </style>
+</resources>
