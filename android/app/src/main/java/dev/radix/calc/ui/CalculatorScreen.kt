@@ -110,7 +110,12 @@ fun CalculatorScreen(vm: CalculatorViewModel) {
             PanelTabs(state.panel, vm::selectPanel)
             // The strip stays while the IME is up — typing a name is exactly
             // when the prefix-filtered chips earn their place; only the keypad yields.
-            FnStrip(state.suggestions, onOpenSheet = { vm.openSheet(Sheet.FN) }, onInsert = vm::insertFunction)
+            FnStrip(
+                state.suggestions,
+                onOpenSheet = { vm.openSheet(Sheet.FN) },
+                onInsert = vm::insertFunction,
+                onInsertText = vm::insert,
+            )
             if (!imeVisible) {
                 Keypad(
                     onInsert = vm::insert,

@@ -45,9 +45,10 @@ private fun digit(c: Char) = Key.Insert(c.toString())
  * 4  5  6  ^  |  ~
  * 1  2  3  +  -  *
  * 0  ,  (  )  ⌫  =
- * SI [] 0x ans abc /
+ * SI [] 0x ;  abc /
  * ```
- * `,` is the decimal separator (comma mode is fixed); `;` lives in the SI sheet.
+ * `,` is the decimal separator and `;` the argument separator (comma mode is
+ * fixed). `ans` is a name, so it lives as a permanent chip in the fn strip.
  */
 val KEY_ROWS: List<List<Key>> = listOf(
     "ABCDEF".map(::hex),
@@ -55,7 +56,7 @@ val KEY_ROWS: List<List<Key>> = listOf(
     listOf(digit('4'), digit('5'), digit('6'), op("^"), op("|"), op("~")),
     listOf(digit('1'), digit('2'), digit('3'), op("+"), op("-"), op("*")),
     listOf(digit('0'), digit(','), op("("), op(")"), Key.Backspace, Key.Enter),
-    listOf(Key.Si, Key.Slice, Key.Insert("0x", kind = Key.Kind.NAME), Key.Insert("ans", kind = Key.Kind.NAME), Key.Ime, op("/")),
+    listOf(Key.Si, Key.Slice, Key.Insert("0x", kind = Key.Kind.NAME), op(";"), Key.Ime, op("/")),
 )
 
 @Composable

@@ -13,10 +13,11 @@ ambiguity to resolve about major/minor/patch.
 
 - Android front-end (`android/`, personal sideload — not set up for the Play
   Store): a touch-first Jetpack Compose UI over the unchanged Python engine,
-  embedded with Chaquopy. A fixed 6×6 keypad puts A–F and the bit operators
-  next to the digits; `SI`, `[ ]` and `fn` open small sheets (the function
-  sheet is generated from the engine's own tables); `abc` summons the system
-  keyboard for typed names. Integer results render as a nibble-hero register
+  embedded with Chaquopy. A fixed 6×6 keypad puts A–F, the bit operators and
+  the `;` argument separator next to the digits; `SI`, `[ ]` and `fn` open
+  small sheets (the function sheet is generated from the engine's own
+  tables), `ans` is a permanent chip beside `fn`, and `abc` summons the
+  system keyboard for typed names. Integer results render as a nibble-hero register
   (each hex digit above its four bits — tap toggles a bit, drag reads a
   field), reals as a large readout; HISTORY and MODES live behind a segmented
   row. Word size and signedness are tappable status chips. Comma mode is

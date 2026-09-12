@@ -32,12 +32,14 @@ A  B  C  D  E  F
 4  5  6  ^  |  ~
 1  2  3  +  -  *
 0  ,  (  )  ⌫  =
-SI [] 0x ans abc /
+SI [] 0x ;  abc /
 ```
 
-`SI` sheet: `f p n µ m k M G T Ki Mi Gi ;`. `[ ]` sheet: `[ ] : ** // %`.
-`fn` opens the function sheet grouped by engine `category`; the rest of the
-strip shows `suggest()` chips. Long-press `⌫` clears the line.
+`,` is the decimal separator, `;` the argument separator (comma mode). `SI`
+sheet: `f p n µ m k M G T Ki Mi Gi`. `[ ]` sheet: `[ ] : ** // %`. `fn` opens
+the function sheet grouped by engine `category`; `ans` is a permanent chip
+next to it (it is a name, not a symbol); the rest of the strip shows
+`suggest()` chips. Long-press `⌫` clears the line.
 
 ## Screens
 

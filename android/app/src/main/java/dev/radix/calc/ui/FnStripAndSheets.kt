@@ -22,19 +22,28 @@ import dev.radix.calc.FnGroup
 import dev.radix.calc.Sheet
 import dev.radix.calc.Suggestion
 
-/** `fn` opens the full sheet; the rest of the strip is the engine's `suggest()`. */
+/**
+ * `fn` opens the full sheet, `ans` is always there (it is a name, like the
+ * functions), and the rest of the strip is the engine's `suggest()`.
+ */
 @Composable
-fun FnStrip(suggestions: List<Suggestion>, onOpenSheet: () -> Unit, onInsert: (String) -> Unit) {
+fun FnStrip(
+    suggestions: List<Suggestion>,
+    onOpenSheet: () -> Unit,
+    onInsert: (String) -> Unit,
+    onInsertText: (String) -> Unit,
+) {
     LazyRow(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item { Chip("fn", active = true, onClick = onOpenSheet) }
+        item { Chip("ans", active = true, onClick = { onInsertText("ans") }) }
         items(suggestions, key = { it.name }) { s -> Chip(s.name, onClick = { onInsert(s.insert) }) }
     }
 }
 
-val SI_SUFFIXES = listOf("f", "p", "n", "µ", "m", "k", "M", "G", "T", "Ki", "Mi", "Gi", ";")
+val SI_SUFFIXES = listOf("f", "p", "n", "µ", "m", "k", "M", "G", "T", "Ki", "Mi", "Gi")
 val SLICE_SYMBOLS = listOf("[", "]", ":", "**", "//", "%")
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -50,7 +59,7 @@ fun Sheets(
     if (sheet == null) return
     ModalBottomSheet(onDismissRequest = onClose, containerColor = p.surface) {
         when (sheet) {
-            Sheet.SI -> SymbolSheet("SI SUFFIX · ; ARGUMENT SEPARATOR", SI_SUFFIXES) { onInsert(it); onClose() }
+            Sheet.SI -> SymbolSheet("SI SUFFIX", SI_SUFFIXES) { onInsert(it); onClose() }
             Sheet.SLICE -> SymbolSheet("SLICE · POWER · INTEGER DIVISION", SLICE_SYMBOLS) { onInsert(it); onClose() }
             Sheet.FN -> FnSheet(functions) { onInsertFunction(it); onClose() }
         }
