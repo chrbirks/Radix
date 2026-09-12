@@ -15,6 +15,8 @@ ambiguity to resolve about major/minor/patch.
   screen (28sp, up from 13sp and above the 22sp input) so the answer reads
   at a glance; the normalized form sits beside it at the old size, aligned
   on the baseline, and error/info messages stay small.
+- Android: the register caption is just "REGISTER" — the "· 31 ─── 0" bit
+  range suffix is gone.
 
 ## [14] - 2026-09-12
 

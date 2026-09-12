@@ -87,7 +87,6 @@ fun CalculatorScreen(vm: CalculatorViewModel) {
                     when (state.panel) {
                         Panel.BITS -> ResultCard(
                             card = state.card,
-                            wordSize = state.modes.wordSize,
                             dimmed = state.result?.isError == true,
                             fieldReadout = state.fieldReadout,
                             onToggleBit = vm::toggleBit,

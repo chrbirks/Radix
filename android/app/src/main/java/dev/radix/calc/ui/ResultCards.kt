@@ -56,7 +56,6 @@ private fun Card(modifier: Modifier = Modifier, content: @Composable () -> Unit)
 @Composable
 fun ResultCard(
     card: ResultPayload?,
-    wordSize: Int,
     dimmed: Boolean,
     fieldReadout: FieldReadout?,
     onToggleBit: (Int) -> Unit,
@@ -66,7 +65,7 @@ fun ResultCard(
     val alpha = if (dimmed) 0.55f else 1f
     Column(Modifier.fillMaxSize().alpha(alpha)) {
         when (card?.kind) {
-            "int" -> RegisterCard(card, wordSize, fieldReadout, onToggleBit, onSelectField, onApplyField)
+            "int" -> RegisterCard(card, fieldReadout, onToggleBit, onSelectField, onApplyField)
             "real" -> RealCard(card)
             "info" -> InfoCard(card.infoText.orEmpty())
             else -> EmptyCard()
@@ -93,7 +92,6 @@ private fun EmptyCard() {
 @Composable
 fun RegisterCard(
     payload: ResultPayload,
-    wordSize: Int,
     fieldReadout: FieldReadout?,
     onToggleBit: (Int) -> Unit,
     onSelectField: (Int, Int) -> Unit,
@@ -115,7 +113,7 @@ fun RegisterCard(
         return cellBounds.entries.firstOrNull { it.value.contains(root) }?.key
     }
 
-    ZoneCaption("REGISTER · ${wordSize - 1} ─────── 0")
+    ZoneCaption("REGISTER")
     Card {
         Column(
             Modifier
