@@ -147,3 +147,56 @@ jobs:
         with:
           name: radix-Windows
           path: radix-windows-x86_64.zip
+
+  # Pushing an annotated `vN` tag (the "Release Radix N" commit) publishes a
+  # GitHub release named "Radix N" with the `## [N]` CHANGELOG section as its
+  # notes and the two frozen bundles attached. The tag must match
+  # `radix.__version__`, otherwise the binaries would report the wrong version.
+  release:
+    needs: [build-linux, build-windows]
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag against radix.__version__
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          src="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/radix/__init__.py)"
+          if [ "$tag" != "$src" ]; then
+            echo "::error::tag is v$tag but radix.__version__ is \"$src\""
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+        id: version
+
+      - name: Release notes from CHANGELOG.md
+        # Everything between `## [N] - date` and the next `## [` heading.
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          awk -v v="$v" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            /^## \[/ { on = 0 }
+            on
+          ' CHANGELOG.md | sed '/./,$!d' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::warning::CHANGELOG.md has no [$v] section; release notes will be a pointer"
+            echo "See CHANGELOG.md for this release." > notes.md
+          fi
+          cat notes.md
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: radix-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Radix ${{ steps.version.outputs.version }}
+          body_path: notes.md
+          files: |
+            radix-linux-x86_64.tar.gz
+            radix-windows-x86_64.zip
+          fail_on_unmatched_files: true

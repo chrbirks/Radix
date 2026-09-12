@@ -84,8 +84,12 @@ diagnostics.
 - Pyright "Import could not be resolved" diagnostics for PySide6 etc. are
   IDE-only noise (venv not detected); ruff/mypy/pytest via uv are
   authoritative.
-- No git remote is configured, so CI (including the Windows PyInstaller leg)
-  has never run; the frozen build is verified locally on Linux only.
+- `origin` is GitHub; `.github/workflows/ci.yml` runs lint/mypy/pytest on
+  Linux and Windows and freezes both bundles on every push. Cutting a release:
+  bump `radix.__version__`, turn `[Unreleased]` into `## [N] - date`, commit
+  "Release Radix N", then push an annotated `vN` tag — the `release` job
+  checks the tag against `__version__`, takes that CHANGELOG section as the
+  notes, and attaches the Linux tarball and Windows zip to a GitHub release.
 - Android: `connectedDebugAndroidTest` uninstalls the app afterwards (history
   and state gone), so reinstall before adb-driven UI checks. Verify UI
   changes on the headless emulator with `adb exec-out screencap -p` and

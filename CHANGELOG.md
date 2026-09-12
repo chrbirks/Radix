@@ -11,6 +11,9 @@ ambiguity to resolve about major/minor/patch.
 
 ### Added
 
+- Pushing a `vN` tag now publishes a GitHub release automatically: the
+  changelog section for that version becomes the notes, and the Linux and
+  Windows bundles CI already builds are attached.
 - Android front-end (`android/`, personal sideload — not set up for the Play
   Store): a touch-first Jetpack Compose UI over the unchanged Python engine,
   embedded with Chaquopy. A fixed 6×6 keypad is split into three zones with a
