@@ -53,8 +53,15 @@ export ANDROID_AVD_HOME=/tmp/radix-avd            # see below; mkdir -p it first
 avdmanager create avd -n radix -k "system-images;android-36;google_apis;x86_64" -d pixel_6
 emulator -avd radix -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot &
 adb wait-for-device; ./gradlew assembleDebug -Pradix.abi=x86_64 && adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n dev.radix.calc/.MainActivity; adb exec-out screencap -p > shot.png
+adb shell am start -W -n dev.radix.calc/.MainActivity   # -W waits for the first frame
+sleep 2; adb exec-out screencap -p > shot.png
 ```
+
+A screenshot taken straight after `am start` shows the launch splash (the
+Radix icon on a blank ground): the first frame waits for the embedded Python
+to start, and the very first launch also unpacks the stdlib and the engine,
+which takes several seconds on a software-rendered emulator. `-W` blocks
+until the activity has drawn; the extra `sleep` covers the first preview.
 
 Gotchas, all hit in practice:
 
