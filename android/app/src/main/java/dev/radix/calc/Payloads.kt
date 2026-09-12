@@ -29,7 +29,6 @@ data class ResultPayload(
     val dec: String? = null,
     val bin: String? = null,
     val nibbles: List<Nibble> = emptyList(),
-    val changed: List<Int> = emptyList(),
     val truncated: Boolean = false,
     @SerialName("info_text") val infoText: String? = null,
     val message: String? = null,

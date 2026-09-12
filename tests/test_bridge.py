@@ -208,22 +208,6 @@ def test_scratch_survives_word_size_cycling_but_not_edits(bridge: Bridge) -> Non
     assert bridge.toggle_bit(0)["input"] == "0xEE"
 
 
-def test_toggle_bit_marks_changed(bridge: Bridge) -> None:
-    bridge.evaluate("0xF0")
-    assert bridge.toggle_bit(4)["changed"] == [4]
-
-
-def test_changed_bits_diff_committed_results_only(bridge: Bridge) -> None:
-    # Keystroke previews diff against nothing (typing 0xDEADBEEF digit by digit
-    # would otherwise outline half the register); commits diff against the
-    # previous commit, and a toggle marks its own bit.
-    bridge.evaluate("0b0001")
-    assert bridge.preview("0b0011")["changed"] == []
-    assert bridge.evaluate("0b0011")["changed"] == [1]
-    assert bridge.preview("0b0111")["changed"] == []
-    assert bridge.evaluate("0b0111")["changed"] == [2]
-
-
 def test_toggle_without_integer_is_an_error(bridge: Bridge) -> None:
     with pytest.raises(ValueError):
         bridge.toggle_bit(0)

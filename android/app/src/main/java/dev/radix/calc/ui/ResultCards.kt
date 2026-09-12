@@ -102,7 +102,6 @@ fun RegisterCard(
     val p = LocalPalette.current
     val nibbles = payload.nibbles
     val total = nibbles.size * 4
-    val changed = payload.changed.toSet()
     val cellBounds = remember { mutableStateMapOf<Int, Rect>() }
     var gridOrigin by remember { mutableStateOf(Offset.Zero) }
     var dragStart by remember { mutableStateOf<Int?>(null) }
@@ -156,7 +155,6 @@ fun RegisterCard(
                                     val bitIndex = total - 1 - (nibbleIndex * 4 + j)
                                     BitCell(
                                         on = bit == 1,
-                                        changed = bitIndex in changed,
                                         selected = selection?.contains(bitIndex) == true,
                                         modifier = Modifier
                                             .weight(1f)
@@ -196,13 +194,9 @@ fun RegisterCard(
 }
 
 @Composable
-private fun BitCell(on: Boolean, changed: Boolean, selected: Boolean, modifier: Modifier) {
+private fun BitCell(on: Boolean, selected: Boolean, modifier: Modifier) {
     val p = LocalPalette.current
-    val outline = when {
-        selected -> p.accent
-        changed -> p.bitChanged
-        else -> null
-    }
+    val outline = if (selected) p.accent else null
     Box(
         modifier
             .height(Dimens.bitCell)

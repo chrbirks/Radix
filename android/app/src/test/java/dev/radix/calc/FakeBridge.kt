@@ -31,11 +31,11 @@ class FakeBridge : RadixBridge {
         const val MODES =
             """{"word_size": 32, "signed": false, "angle": "rad", "notation": "auto", "int_base": "dec"}"""
 
-        fun intPayload(text: String, input: String? = null, changed: String = "[]"): String = """
+        fun intPayload(text: String, input: String? = null): String = """
             {"kind": "int", "text": "$text", "normalized": "$text", "note": "", "prefix": "",
              "hex": "0x2A", "dec": "$text", "bin": "0b10_1010",
              "nibbles": [{"hex": "2", "bits": [0,0,1,0]}, {"hex": "A", "bits": [1,0,1,0]}],
-             "changed": $changed, "truncated": false,
+             "truncated": false,
              ${if (input != null) "\"input\": \"$input\"," else ""}
              "modes": $MODES}
         """.trimIndent()

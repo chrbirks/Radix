@@ -42,10 +42,6 @@ def _nibbles(hex_view: str) -> list[dict[str, Any]]:
     ]
 
 
-def _set_bits(mask: int, word_size: int) -> list[int]:
-    return [bit for bit in range(word_size) if mask >> bit & 1]
-
-
 class Bridge:
     """One per process. Owns the Session, the on-device history file and the
     bit-grid scratch value."""
@@ -57,12 +53,8 @@ class Bridge:
         self.store = HistoryStore(Path(files_dir) / "history.jsonl")
         self._entries: list[StoredEntry] = self.store.load()
         # Mirrors ui_qt/bit_panel.py: the scratch stays *unmasked* so cycling
-        # the word size never destroys upper bits. Unlike the desktop, changed
-        # bits are diffed between *committed* results only (plus a toggle's own
-        # bit): keystroke previews on a phone would otherwise outline half the
-        # register while a literal is being typed.
+        # the word size never destroys upper bits.
         self._scratch: int | None = None
-        self._last_committed: int | None = None
         self._mru: list[str] = []  # function names, most recently committed first
         if state_json is not None:
             self.load_state(state_json)
@@ -111,7 +103,7 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=False)
         except CalcError as exc:
             return self._error(exc)
-        return self._payload(outcome, changed=0)
+        return self._payload(outcome)
 
     def evaluate(self, text: str) -> Payload:
         """Commit one line: variables, ``ans`` and history change here only."""
@@ -119,13 +111,7 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=True)
         except CalcError as exc:
             return self._error(exc)
-        changed = 0
-        number = outcome.value.number if outcome.value is not None else None
-        if isinstance(number, int):
-            if self._last_committed is not None:
-                changed = number ^ self._last_committed
-            self._last_committed = number
-        payload = self._payload(outcome, changed=changed)
+        payload = self._payload(outcome)
         if outcome.kind == "clear":
             self.clear_history()
         elif outcome.value is not None:
@@ -159,7 +145,7 @@ class Bridge:
             "modes": self.modes(),
         }
 
-    def _payload(self, outcome: Outcome, changed: int) -> Payload:
+    def _payload(self, outcome: Outcome) -> Payload:
         s = self.session
         p: Payload = {
             "kind": "empty",
@@ -168,7 +154,6 @@ class Bridge:
             "note": "",
             "prefix": "",
             "nibbles": [],
-            "changed": [],
             "modes": self.modes(),
         }
         if outcome.kind in _INFO_KINDS:
@@ -195,7 +180,6 @@ class Bridge:
         p["bin"] = views.binary
         p["nibbles"] = _nibbles(views.hex)
         p["truncated"] = views.truncated
-        p["changed"] = _set_bits(changed, s.word_size)
         return p
 
     # -- bit editing ---------------------------------------------------------
@@ -215,7 +199,6 @@ class Bridge:
         literal = f"0x{masked:X}"
         payload = self.preview(literal)
         payload["input"] = literal
-        payload["changed"] = [bit]
         return payload
 
     def field(self, hi: int, lo: int) -> Payload:
