@@ -31,6 +31,46 @@ The engine is bundled straight from `../src` (no copy step), so a desktop
 engine change is in the next `assembleDebug`. The version is read from
 `radix.__version__`.
 
+## Install on phone via USB (adb)
+
+```sh
+cd android && ./gradlew assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk  (arm64-v8a, ~33 MB)
+```
+
+### Route A — adb over USB (recommended)
+
+1. On the phone: Settings → About phone → tap Build number seven times (unlocks Developer options). Then Settings → System → Developer options → turn on USB debugging.
+2. Plug in the USB cable. If a "Charging this device via USB" notification appears, leave it on charging — file-transfer mode isn't needed for adb.
+3. On the PC:
+   `adb devices`
+   The first time, the phone shows Allow USB debugging? with the PC's fingerprint — tick Always allow from this computer and accept. adb devices should then list it as device
+   (not unauthorized).
+4. If the emulator is still running, adb will have two targets and refuse to guess. Pick the phone with its serial from adb devices:
+   `adb -s <phone-serial> install -r app/build/outputs/apk/debug/app-debug.apk`
+   (Just adb install -r … when the phone is the only device.)
+5. Radix appears in the launcher. Open it — the first launch takes a few seconds while Chaquopy unpacks Python; after that it's fast.
+
+-r means "replace" — use the same command for every later build. The debug signing key is generated per machine (~/.android/debug.keystore) and stays stable, so updates install
+straight over the top without losing history or variables.
+
+### Route B — copy the file
+
+If you'd rather not enable USB debugging: get app-debug.apk onto the phone any way you like (USB file transfer, Drive, email to yourself), open it from the Files app, and:
+
+- Android will ask to allow Files to install unknown apps — allow it (once).
+- Play Protect will warn that the app is from an unknown developer, because it's debug-signed and not from the store. Choose More details → Install anyway.
+
+### Two things that trip people up
+
+- adb server version doesn't match — you have both the system /usr/bin/adb and the SDK's platform-tools/adb; if they're different versions they fight over the daemon. Run adb
+  kill-server and then use whichever one your PATH picks up first (the README's PATH line puts the SDK's first).
+- Signature mismatch on install — only happens if you build on a different machine (different debug key). Fix: uninstall the old one first (adb uninstall dev.radix.calc or from
+  Settings), then install.
+
+Wireless debugging (Developer options → Wireless debugging → Pair device with pairing code, then adb pair / adb connect) works too on the Pixel 9 if the cable is a nuisance,
+but USB is the fewer-moving-parts option for the first install.
+
 ## Environment
 
 The build needs `JAVA_HOME` (JDK 17) and `ANDROID_HOME`; a user-local install
