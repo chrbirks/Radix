@@ -15,3 +15,11 @@ build/
 
 # Planning docs: kept locally, not tracked in git
 docs/*.md
+
+# superpowers brainstorming session scratch
+.superpowers/
+
+# Android build outputs
+android/.gradle/
+android/**/build/
+android/local.properties
