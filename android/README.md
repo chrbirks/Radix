@@ -38,16 +38,18 @@ without root works fine:
 
 ```sh
 export JAVA_HOME=~/.local/opt/jdk-17 ANDROID_HOME=~/.local/opt/android-sdk
-export PATH=$JAVA_HOME/bin:$PATH
+export PATH=$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
 ```
 
-AGP pulls the build-tools it wants (35.0.0) on the first run.
+The second line is what puts `sdkmanager`, `avdmanager`, `adb` and `emulator`
+on your `PATH` — none of them are installed system-wide. AGP pulls the
+build-tools it wants (35.0.0) on the first run.
 
 ## Emulator (for UI checks without a phone)
 
 ```sh
-sdkmanager --install emulator "system-images;android-36;google_apis;x86_64"
-export ANDROID_AVD_HOME=/tmp/radix-avd            # see below
+sdkmanager --install emulator "system-images;android-36;google_apis;x86_64"   # once
+export ANDROID_AVD_HOME=/tmp/radix-avd            # see below; mkdir -p it first
 avdmanager create avd -n radix -k "system-images;android-36;google_apis;x86_64" -d pixel_6
 emulator -avd radix -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot &
 adb wait-for-device; ./gradlew assembleDebug -Pradix.abi=x86_64 && adb install -r app/build/outputs/apk/debug/app-debug.apk
