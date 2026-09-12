@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import androidx.compose.ui.draw.clip
@@ -122,7 +124,11 @@ private fun errorUnderline(span: List<Int>?, color: androidx.compose.ui.graphics
 @Composable
 private fun PreviewLine(result: ResultPayload?) {
     val p = LocalPalette.current
-    Row(Modifier.fillMaxWidth().height(18.dp)) {
+    // Reserve one line so the card below doesn't jump between states — but
+    // size it from the text (sp), not a fixed dp: sp follows the phone's font
+    // size setting and a 1.3× scale clipped the bottom of a fixed 18dp row.
+    val lineHeight = with(LocalDensity.current) { (Dimens.previewText.value * 1.45f).sp.toDp() }
+    Row(Modifier.fillMaxWidth().heightIn(min = lineHeight)) {
         when {
             result == null -> Text("ready", color = p.hairline, fontFamily = MonoFont, fontSize = Dimens.previewText)
             result.isError && result.incomplete ->
