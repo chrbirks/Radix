@@ -72,6 +72,7 @@ object Dimens {
     val keyRadius = 8.dp
     val keyHeight = 44.dp
     val keyGap = 5.dp
+    val zoneGap = 14.dp // total gutter between keypad zones (keyGap on both sides of a spacer)
     val chipHeight = 32.dp
     val bitCell = 24.dp
     val zoneCaption = 9.sp

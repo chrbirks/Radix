@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,24 +41,33 @@ private fun op(s: String) = Key.Insert(s, kind = Key.Kind.OP)
 private fun digit(c: Char) = Key.Insert(c.toString())
 
 /**
+ * Three zones per row, separated by a gutter, so a thumb never crosses the
+ * pad for one kind of key:
  * ```
- * A  B  C  D  E  F
- * 7  8  9  << >> &
- * 4  5  6  ^  |  ~
- * 1  2  3  +  -  *
- * 0  ,  (  )  ⌫  =
- * SI [] 0x ;  abc /
+ * A  B  C  │ <<  >> │ ⌫
+ * D  E  F  │ &   |  │ /
+ * 7  8  9  │ ^   ~  │ *
+ * 4  5  6  │ (   )  │ -
+ * 1  2  3  │ [ ] ;  │ +
+ * 0  ,  0x │ SI abc │ =
  * ```
- * `,` is the decimal separator and `;` the argument separator (comma mode is
- * fixed). `ans` is a name, so it lives as a permanent chip in the fn strip.
+ * Left: literals (`,` is the decimal separator — comma mode is fixed). Middle:
+ * bit-op pairs, then call/slice structure (`;` is the argument separator)
+ * and the two sheet/IME modifiers. Right: `⌫`, arithmetic, `=` — the corners
+ * every calculator uses. `ans` is a name, so it lives as a permanent chip in
+ * the fn strip.
  */
-val KEY_ROWS: List<List<Key>> = listOf(
-    "ABCDEF".map(::hex),
-    listOf(digit('7'), digit('8'), digit('9'), op("<<"), op(">>"), op("&")),
-    listOf(digit('4'), digit('5'), digit('6'), op("^"), op("|"), op("~")),
-    listOf(digit('1'), digit('2'), digit('3'), op("+"), op("-"), op("*")),
-    listOf(digit('0'), digit(','), op("("), op(")"), Key.Backspace, Key.Enter),
-    listOf(Key.Si, Key.Slice, Key.Insert("0x", kind = Key.Kind.NAME), op(";"), Key.Ime, op("/")),
+val KEY_ROWS: List<List<List<Key>>> = listOf(
+    listOf(listOf(hex('A'), hex('B'), hex('C')), listOf(op("<<"), op(">>")), listOf(Key.Backspace)),
+    listOf(listOf(hex('D'), hex('E'), hex('F')), listOf(op("&"), op("|")), listOf(op("/"))),
+    listOf(listOf(digit('7'), digit('8'), digit('9')), listOf(op("^"), op("~")), listOf(op("*"))),
+    listOf(listOf(digit('4'), digit('5'), digit('6')), listOf(op("("), op(")")), listOf(op("-"))),
+    listOf(listOf(digit('1'), digit('2'), digit('3')), listOf(Key.Slice, op(";")), listOf(op("+"))),
+    listOf(
+        listOf(digit('0'), digit(','), Key.Insert("0x", kind = Key.Kind.NAME)),
+        listOf(Key.Si, Key.Ime),
+        listOf(Key.Enter),
+    ),
 )
 
 @Composable
@@ -72,22 +83,25 @@ fun Keypad(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Dimens.keyGap)) {
         KEY_ROWS.forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Dimens.keyGap)) {
-                row.forEach { key ->
-                    KeyButton(
-                        key = key,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            when (key) {
-                                is Key.Insert -> onInsert(key.text)
-                                Key.Enter -> onEnter()
-                                Key.Backspace -> onBackspace()
-                                Key.Si -> onSi()
-                                Key.Slice -> onSlice()
-                                Key.Ime -> onIme()
-                            }
-                        },
-                        onLongClick = if (key == Key.Backspace) onClear else null,
-                    )
+                row.forEachIndexed { zone, keys ->
+                    if (zone > 0) Spacer(Modifier.width(Dimens.zoneGap - Dimens.keyGap * 2))
+                    keys.forEach { key ->
+                        KeyButton(
+                            key = key,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                when (key) {
+                                    is Key.Insert -> onInsert(key.text)
+                                    Key.Enter -> onEnter()
+                                    Key.Backspace -> onBackspace()
+                                    Key.Si -> onSi()
+                                    Key.Slice -> onSlice()
+                                    Key.Ime -> onIme()
+                                }
+                            },
+                            onLongClick = if (key == Key.Backspace) onClear else null,
+                        )
+                    }
                 }
             }
         }

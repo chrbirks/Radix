@@ -27,14 +27,19 @@ engine.
 ## Keypad
 
 ```
-A  B  C  D  E  F
-7  8  9  << >> &
-4  5  6  ^  |  ~
-1  2  3  +  -  *
-0  ,  (  )  ⌫  =
-SI [] 0x ;  abc /
+A  B  C  │ <<  >> │ ⌫
+D  E  F  │ &   |  │ /
+7  8  9  │ ^   ~  │ *
+4  5  6  │ (   )  │ -
+1  2  3  │ [ ] ;  │ +
+0  ,  0x │ SI abc │ =
 ```
 
+Three zones per row with a gutter between them, so a thumb never crosses the
+pad for one kind of key: literals on the left (hex rows above the classic
+digit pad, `0x` beside `0`), bit-operator pairs then call/slice structure
+and the two modifiers in the middle, and the `⌫`/arithmetic/`=` column on the
+right — the corners every calculator uses.
 `,` is the decimal separator, `;` the argument separator (comma mode). `SI`
 sheet: `f p n µ m k M G T Ki Mi Gi`. `[ ]` sheet: `[ ] : ** // %`. `fn` opens
 the function sheet grouped by engine `category`; `ans` is a permanent chip
