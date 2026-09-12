@@ -50,7 +50,7 @@ build-tools it wants (35.0.0) on the first run.
 ```sh
 sdkmanager --install emulator "system-images;android-36;google_apis;x86_64"   # once
 export ANDROID_AVD_HOME=/tmp/radix-avd            # see below; mkdir -p it first
-avdmanager create avd -n radix -k "system-images;android-36;google_apis;x86_64" -d pixel_6
+avdmanager create avd -n radix -k "system-images;android-36;google_apis;x86_64" -d pixel_9   # `avdmanager list device` for others
 emulator -avd radix -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot &
 adb wait-for-device; ./gradlew assembleDebug -Pradix.abi=x86_64 && adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -W -n dev.radix.calc/.MainActivity   # -W waits for the first frame
