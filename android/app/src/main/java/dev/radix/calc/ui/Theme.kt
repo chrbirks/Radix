@@ -77,7 +77,9 @@ object Dimens {
     val bitCell = 24.dp
     val zoneCaption = 9.sp
     val inputText = 22.sp
-    val previewText = 13.sp
+    val previewText = 13.sp // errors, info, placeholder under the input
+    val resultText = 28.sp // the committed/live value — the readout is the hero
+    val resultDetail = 13.sp // normalized form beside the value
 }
 
 @Composable

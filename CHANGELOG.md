@@ -7,6 +7,15 @@ Versions are a simple incrementing integer (1, 2, 3, …), not semantic
 versioning — there's one user, no external API to keep compatible, and no
 ambiguity to resolve about major/minor/patch.
 
+## [Unreleased]
+
+### Changed
+
+- Android: the result line under the input is now the largest text on the
+  screen (28sp, up from 13sp and above the 22sp input) so the answer reads
+  at a glance; the normalized form sits beside it at the old size, aligned
+  on the baseline, and error/info messages stay small.
+
 ## [14] - 2026-09-12
 
 ### Added

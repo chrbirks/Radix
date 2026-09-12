@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalDensity
@@ -124,11 +125,11 @@ private fun errorUnderline(span: List<Int>?, color: androidx.compose.ui.graphics
 @Composable
 private fun PreviewLine(result: ResultPayload?) {
     val p = LocalPalette.current
-    // Reserve one line so the card below doesn't jump between states — but
-    // size it from the text (sp), not a fixed dp: sp follows the phone's font
-    // size setting and a 1.3× scale clipped the bottom of a fixed 18dp row.
-    val lineHeight = with(LocalDensity.current) { (Dimens.previewText.value * 1.45f).sp.toDp() }
-    Row(Modifier.fillMaxWidth().heightIn(min = lineHeight)) {
+    // Reserve the tall value line in every state so the card below doesn't
+    // jump — but size it from the text (sp), not a fixed dp: sp follows the
+    // phone's font size setting and a fixed dp row clipped at 1.3× scale.
+    val lineHeight = with(LocalDensity.current) { (Dimens.resultText.value * 1.3f).sp.toDp() }
+    Row(Modifier.fillMaxWidth().heightIn(min = lineHeight), verticalAlignment = Alignment.CenterVertically) {
         when {
             result == null -> Text("ready", color = p.hairline, fontFamily = MonoFont, fontSize = Dimens.previewText)
             result.isError && result.incomplete ->
@@ -143,11 +144,15 @@ private fun PreviewLine(result: ResultPayload?) {
             result.kind == "empty" -> Unit
             else -> {
                 val badge = if (result.prefix.isNotEmpty()) "${result.prefix} ← " else "= "
-                Text(badge + result.text, color = p.accent, fontFamily = MonoFont, fontSize = Dimens.previewText, maxLines = 1)
-                Spacer(Modifier.width(10.dp))
+                Text(
+                    badge + result.text, color = p.accent, fontFamily = MonoFont,
+                    fontSize = Dimens.resultText, maxLines = 1, modifier = Modifier.alignByBaseline(),
+                )
+                Spacer(Modifier.width(12.dp))
                 Text(
                     result.normalized, color = p.muted, fontFamily = MonoFont,
-                    fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f),
+                    fontSize = Dimens.resultDetail, maxLines = 1,
+                    modifier = Modifier.weight(1f).alignByBaseline(),
                 )
             }
         }
