@@ -312,13 +312,17 @@ class BitGrid(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         p = self.palette_tokens
-        on = QColor(p.bit_on if self.enabled_look else p.bit_off)
+        # A dimmed grid (no integer result) paints as a blank register: the
+        # retained value must not ghost through as two tones of grey while
+        # the readout lanes above show placeholders.
+        shown = self.value if self.enabled_look else 0
+        on = QColor(p.bit_on)
         off = QColor(p.bit_off)
         off.setAlphaF(0.6 if not self.enabled_look else 1.0)
         band_colors = (p.float_sign, p.float_exp, p.float_man)
         for bit in range(self.word_size):
             rect = self._cell_rect(bit)
-            set_ = (self.value >> bit) & 1
+            set_ = (shown >> bit) & 1
             if self.bands is not None and self.enabled_look:
                 color = QColor(band_colors[self._band_of(bit)])
                 if not set_:
@@ -371,7 +375,7 @@ class BitGrid(QWidget):
             hi = row_hi
             while hi >= row_lo:
                 lo = max(row_lo, hi // 4 * 4)
-                digit = (self.value >> lo) & ((1 << (hi - lo + 1)) - 1)
+                digit = (shown >> lo) & ((1 << (hi - lo + 1)) - 1)
                 msb_cell = self._cell_rect(hi)
                 lsb_cell = self._cell_rect(lo)
                 hex_rect = QRectF(
@@ -380,7 +384,7 @@ class BitGrid(QWidget):
                     lsb_cell.right() - msb_cell.left(),
                     HEX_H - 2,
                 )
-                strong = self.enabled_look and digit != 0
+                strong = digit != 0
                 painter.setPen(QColor(p.bit_on if strong else p.muted))
                 painter.drawText(
                     hex_rect,

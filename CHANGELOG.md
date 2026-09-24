@@ -18,6 +18,12 @@ ambiguity to resolve about major/minor/patch.
 - Android: the register caption is just "REGISTER" — the "· 31 ─── 0" bit
   range suffix is gone.
 
+### Fixed
+
+- The greyed-out REGISTER grid (after a non-integer result such as `1.5`)
+  no longer ghosts the previous integer through as two shades of grey and
+  stale nibble digits — every cell now paints the same blank grey.
+
 ## [14] - 2026-09-12
 
 ### Added

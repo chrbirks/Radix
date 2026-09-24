@@ -2288,6 +2288,20 @@ def test_grid_cursor_clears_when_the_panel_greys(qtbot, window: MainWindow) -> N
     assert window.intview.cursor_bit is None
 
 
+def test_greyed_grid_paints_every_cell_alike(qtbot, window: MainWindow) -> None:  # type: ignore[no-untyped-def]
+    """The retained value must not ghost through a greyed grid as two greys."""
+    _submit(qtbot, window, "0xF0F0")
+    _submit(qtbot, window, "2.5")
+    grid = window.intview.grid_widget
+    assert not grid.enabled_look
+    img = grid.grab().toImage()
+    colors = set()
+    for bit in range(grid.word_size):
+        center = grid._cell_rect(bit).center()
+        colors.add(img.pixelColor(int(center.x()), int(center.y())).name())
+    assert len(colors) == 1
+
+
 # -- the preview line never cuts text silently -------------------------------------
 
 
