@@ -7,7 +7,7 @@ Versions are a simple incrementing integer (1, 2, 3, …), not semantic
 versioning — there's one user, no external API to keep compatible, and no
 ambiguity to resolve about major/minor/patch.
 
-## [Unreleased]
+## [15] - 2026-11-11
 
 ### Added
 
