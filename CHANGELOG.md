@@ -9,8 +9,71 @@ ambiguity to resolve about major/minor/patch.
 
 ## [Unreleased]
 
+### Added
+
+- `fix()` is exact at every width up to the 128-bit limit. An integer is
+  shifted, never rounded (`fix(2**127 - 1; 128; 0)` used to be refused, and
+  `fix(2**86 + 1; 88; 0)` lost the `+ 1`); a literal, a ratio, or a function
+  such as `pi` or `sqrt(2)` is evaluated at the precision the word needs
+  (`fix(0,1; 1; 127)` ended in 36 zero bits and called itself exact). A stored
+  real — a variable or `ans` — only ever held 25 digits, so in a wider format
+  the note now says how many low bits are beyond it. `unfix()` decodes a wide
+  word exactly, so `fix(unfix(raw; m; n); m; n)` returns `raw` at any width.
+- Verilog signed sized literals: `8'sh80` is -128.
+- PageUp/PageDown scroll the history (it had no keyboard scrolling);
+  Shift+PageUp/PageDown scroll the inspector, whose bit grid and pinned rack
+  fall below the fold at 64-bit word sizes or in a small window.
+- History context menu: copy an integer as a C, Verilog or VHDL literal
+  (`0xDEADBEEF`, `32'hDEAD_BEEF`, `x"DEAD_BEEF"`), sized to its declared width.
+- Up/Down recall keeps the line you were typing: Down past the newest entry
+  brings it back instead of an empty line.
+
 ### Changed
 
+- `sin(pi)`, `cos(pi/2)`, and `sin(180)`/`cos(90)` in DEG mode are 0 (they
+  showed residue like `-7,05e-26`), and `tan` at a pole is an error rather
+  than `-2,8e+25`.
+- A literal such as `1e1000000` is out of range at once — it used to build a
+  million-bit integer on every preview keystroke (10 s each). Products and
+  sums of in-budget integers, and reals that ran away before `//`, are held
+  to the same budget (`2**400000*2**400000*2**400000` showed as "overflow").
+- In comma mode a `,` after a value (`clkdiv(50M, 115200)`, `rol(x,1)`,
+  `50M,5`) is an error that points at `;`. It used to be a bare "unexpected
+  character", or silently `50M × 0,5`.
+- An unfinished literal prefix (`0x`, `8'h`, `x"F`) is "still typing", not a
+  red error — on the phone that fired as soon as the `0x` key was pressed.
+  So is a name the completer is still offering (`cl` on the way to `clog2(`).
+- HEX/BIN result base: a negative value too wide for the word is shown at the
+  next multiple of the word size (`-2**40` → `0xFFFF_FF00_0000_0000`) instead
+  of masked to it (`0x0`).
+- The preview echo groups a substituted value where it would otherwise read
+  wrongly (`x = -2`: `x**2` is `(-2)²`, not `-2²`), and no longer repeats a
+  bare literal (`255 = 255` is now `= 255`). When the line is too narrow the
+  echo is shortened and the `= result` kept; it used to be the other way round.
+- Powers of two in readouts are written `2⁻¹⁵`, not `2^-15`: `^` is XOR here.
+- `fix()` range errors give the real range (`range -1,0 to 0,999969482`)
+  rather than the raw one, and `unfix()` says when the raw value was wider
+  than the format. A real but tiny quantization error reads `<0.01 LSB`, not
+  `0.00 LSB` or `0 LSB`.
+- `round()` and `fix()` say "ties to even" in their help. `help <function>`
+  says "2 arguments", not "2 argument(s)".
+- The RESULT readout wraps a value wider than the window (a 61-digit `2**200`
+  ended at the edge mid-number), the 64-bit BIN readout breaks into equal rows
+  of nibbles, and readout lanes shrink a 128-bit word to fit instead of
+  widening the panel past the window.
+- TRACE cards wrap instead of cutting text at the edge: at the minimum width
+  the clock card lost `err +64 ppm` entirely, the memory card lost "power of
+  two", and the waveform label lost its unit.
+- The help overview wraps to the window; its intro and shortcut list needed
+  886 px and could only be scrolled sideways with the mouse.
+- Number literals, lit bits and warnings meet 4.5:1 contrast in both themes.
+  In the dark theme they were the dimmest text on screen (2.3:1).
+- The first-run examples are written in the current decimal mode, so each one
+  works as typed.
+- `radix -e` prints a result that states its own width (a Q64.64 word) at that
+  width instead of the low word of it.
+- Android: the result line shrinks to fit a long value on one line, and the
+  DEC/HEX readouts wrap as whole values.
 - Android: the result line under the input is now the largest text on the
   screen (28sp, up from 13sp and above the 22sp input) so the answer reads
   at a glance; the normalized form sits beside it at the old size, aligned
@@ -20,6 +83,43 @@ ambiguity to resolve about major/minor/patch.
 
 ### Fixed
 
+- Pinning an integer — and every setting change while one was pinned —
+  created and showed a second, 12 px tall top-level window for a moment.
+- BIN result base with a pinned 64-bit value made the inspector 989 px wide
+  inside a 640 px window: the copy buttons vanished and the bit grid was cut
+  off on the right. Pinned values now elide.
+- A result past 4300 digits (`x = 2**20000`) broke saving: the input line was
+  not cleared, every later Enter failed the same way, and variables stopped
+  being stored until `del x`. Such values are now stored as hex text, and a
+  failed write is reported on the preview line instead of aborting the action.
+- Ctrl+L followed by deleting any history entry erased the hidden history from
+  disk as well, as did deleting an entry from a history longer than the 500
+  that are loaded. Deleting now removes that one line, atomically.
+- Persisted settings were not applied to widgets built before they loaded: a
+  saved period mode still highlighted with the comma grammar, and saved rows
+  kept decimal text under a HEX chip, until any setting was toggled.
+- Error underlines and the CLI caret were short by the line's leading
+  whitespace; `csr CT$L = …` underlined the wrong character.
+- Deeply nested input (600 parentheses, a 3000-term chain) and a runaway bit
+  index (`5[10**5000:0]`) escaped as Python exceptions instead of errors.
+- Arithmetic on a wide round integer (`x = 1e300000`, then `x + 1`) took
+  0.5–1 s per preview keystroke.
+- `radix -e "-5+3"` exited with a usage error.
+- The float view stayed up after FLOAT OFF, or at the old width after a word
+  size change, while the input line was mid-expression.
+- A right click toggled a bit; the Alt+G bit cursor could sit on (and toggle)
+  a bit outside a word that had just been made narrower; "copy as dec" copied
+  `2.55e+2` in SCI notation; Tab after `help si` gave `help sin(`.
+- Android: changing a mode re-evaluated the last expression instead of
+  re-formatting its result — after `ans*2` gave 10, tapping the word size
+  showed 20 — and `del x` left an error under an empty line.
+- Android: a quick drag across the register started its field one bit late
+  (`[14:8]` for a drag begun on bit 15), or was ignored.
+- Android: the MODES panel cut its last row (RESULT BASE) in half; tapping a
+  suggestion chip after typing a prefix gave `sisin()`; backspacing the line
+  empty left the deleted text's preview or error showing; a preview of `del x`
+  or `clear` read as already done; `help` described the desktop ("keyboard-
+  first — no buttons"); the last result was not shown after a relaunch.
 - The greyed-out REGISTER grid (after a non-integer result such as `1.5`)
   no longer ghosts the previous integer through as two shades of grey and
   stale nibble digits — every cell now paints the same blank grey.

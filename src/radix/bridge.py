@@ -30,6 +30,11 @@ Payload = dict[str, Any]
 
 _INFO_KINDS = frozenset({"help", "vars", "csr", "clear", "del"})
 _MRU_LIMIT = 24
+# `help` on the phone: the engine's line is about the desktop's keyboard.
+_PHONE_HELP_INTRO = (
+    "Type an expression and press =. fn lists every function; "
+    "abc opens the keyboard for names."
+)
 
 
 def _nibbles(hex_view: str) -> list[dict[str, Any]]:
@@ -49,13 +54,15 @@ class Bridge:
     def __init__(self, files_dir: str, state_json: str | None = None) -> None:
         # Comma mode is the shipped default (see radix.__main__.main) and is
         # fixed on the phone: the keypad legend is printed for it.
-        self.session = Session(decimal_mode="comma")
+        self.session = Session(decimal_mode="comma", help_intro=_PHONE_HELP_INTRO)
         self.store = HistoryStore(Path(files_dir) / "history.jsonl")
         self._entries: list[StoredEntry] = self.store.load()
         # Mirrors ui_qt/bit_panel.py: the scratch stays *unmasked* so cycling
         # the word size never destroys upper bits.
         self._scratch: int | None = None
         self._mru: list[str] = []  # function names, most recently committed first
+        # The last committed value, as evaluated: what `rerender` re-formats.
+        self._committed: Outcome | None = None
         if state_json is not None:
             self.load_state(state_json)
 
@@ -103,7 +110,7 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=False)
         except CalcError as exc:
             return self._error(exc)
-        return self._payload(outcome)
+        return self._payload(outcome, committed=False)
 
     def evaluate(self, text: str) -> Payload:
         """Commit one line: variables, ``ans`` and history change here only."""
@@ -111,30 +118,50 @@ class Bridge:
             outcome = self.session.evaluate(text, commit=True)
         except CalcError as exc:
             return self._error(exc)
-        payload = self._payload(outcome)
+        payload = self._payload(outcome, committed=True)
         if outcome.kind == "clear":
+            self._committed = None
             self.clear_history()
         elif outcome.value is not None:
+            self._committed = outcome
             self._remember_functions(text)
-            expression = text.strip()
-            self.store.append(
-                expression,
+            entry = StoredEntry(
+                text.strip(),
                 payload["text"],
                 payload["note"],
+                time.time(),
                 value=outcome.value,
                 prefix=payload["prefix"],
             )
-            self._entries.append(
-                StoredEntry(
-                    expression,
-                    payload["text"],
-                    payload["note"],
-                    time.time(),
-                    value=outcome.value,
-                    prefix=payload["prefix"],
+            self._entries.append(entry)
+            try:
+                self.store.append(
+                    entry.expression,
+                    entry.result,
+                    entry.note,
+                    value=entry.value,
+                    prefix=entry.prefix,
+                    timestamp=entry.timestamp,
                 )
-            )
+            except OSError as exc:
+                # The result stands and stays in this session's history; only
+                # the file write failed (storage full, permissions).
+                payload["warning"] = f"history not saved: {exc.strerror or exc}"
         return payload
+
+    def rerender(self) -> Payload:
+        """The last committed value under the current modes — never re-evaluated.
+
+        This is what the screen falls back to when the input line is empty, and
+        what a mode change refreshes. Re-previewing the committed *expression*
+        instead showed 20 for a line that had committed `ans*2` = 10.
+        """
+        outcome = self._committed
+        if outcome is None and self.session.ans is not None:
+            outcome = Outcome("value", self.session.ans)  # after a restart
+        if outcome is None:
+            return self._payload(Outcome("empty"), committed=True)
+        return self._payload(outcome, committed=True)
 
     def _error(self, exc: CalcError) -> Payload:
         return {
@@ -145,7 +172,7 @@ class Bridge:
             "modes": self.modes(),
         }
 
-    def _payload(self, outcome: Outcome) -> Payload:
+    def _payload(self, outcome: Outcome, committed: bool) -> Payload:
         s = self.session
         p: Payload = {
             "kind": "empty",
@@ -158,7 +185,11 @@ class Bridge:
         }
         if outcome.kind in _INFO_KINDS:
             p["kind"] = "info"
-            p["info_text"] = outcome.help_text or _info_default(outcome)
+            p["info_text"] = (
+                (outcome.help_text or _info_default(outcome))
+                if committed
+                else _info_pending(outcome)
+            )
             return p
         value = outcome.value
         if value is None:
@@ -230,8 +261,8 @@ class Bridge:
         ]
 
     def delete_history(self, index: int) -> list[Payload]:
-        del self._entries[index]
-        self.store.rewrite(self._entries)
+        entry = self._entries.pop(index)
+        self.store.remove(entry)  # that one line only: the file holds more than we do
         return self.history()
 
     def clear_history(self) -> list[Payload]:
@@ -265,7 +296,12 @@ class Bridge:
             names = [name for name in FUNCTIONS if name.startswith(prefix)]
         else:
             names = self._mru + [name for name in FUNCTIONS if name not in self._mru]
-        return [{"name": name, "insert": name + "("} for name in names[:limit]]
+        # `replace`: how many characters left of the cursor the chip stands in
+        # for — the prefix it completed. Without it `si` + [sin] gave `sisin()`.
+        replace = len(prefix) if prefix is not None else 0
+        return [
+            {"name": name, "insert": name + "(", "replace": replace} for name in names[:limit]
+        ]
 
     def _identifier_prefix(self, head: str) -> str | None:
         """The identifier being typed at the end of ``head``, by the lexer's own
@@ -328,6 +364,19 @@ def _info_default(outcome: Outcome) -> str:
     return ""
 
 
+def _info_pending(outcome: Outcome) -> str:
+    """Info text for a *preview*: a command that changes state says what `=`
+    will do instead of reading as already done; the read-only ones (help, vars,
+    the csr list) show their text as it is."""
+    if outcome.kind == "clear":
+        return "press = to clear history (variables & csrs kept)"
+    if outcome.kind == "del":
+        return f"press = to delete {outcome.target}"
+    if outcome.kind == "csr" and outcome.target is not None:
+        return f"press = to define csr {outcome.target}"
+    return outcome.help_text or ""
+
+
 # -- the Kotlin entry point ------------------------------------------------------
 
 RPC_METHODS = frozenset(
@@ -341,6 +390,7 @@ RPC_METHODS = frozenset(
         "history",
         "delete_history",
         "clear_history",
+        "rerender",
         "functions",
         "suggest",
         "state_json",

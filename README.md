@@ -11,9 +11,8 @@ Everything is typed into one input field — no button grids. One unified,
 modeless grammar: `**` is always power, `^` is always XOR, and any integer
 result automatically shows hex, decimal, binary, and a clickable
 bit panel — toggling a bit writes the edited value straight back into the
-input line, dragging across cells selects a bit range and reads out that
-field (`[15:8] = 0xBE = 190`), and bits that changed since the previous value
-are outlined. Float results show their IEEE-754 layout (sign/exponent/
+input line, and dragging across cells selects a bit range and reads out that
+field (`[15:8] = 0xBE = 190`). Float results show their IEEE-754 layout (sign/exponent/
 mantissa bands) instead of going grey. A live preview under the input shows
 the parsed interpretation and the result on every keystroke, before you press
 Enter; errors underline the offending span right in the input. Typing a name
@@ -64,36 +63,41 @@ directory (no logout needed).
 
 ## The language
 
+These are written as the app ships: comma mode, where `,` is the decimal point
+and `;` separates arguments. In period mode (Alt+Shift+D) the same lines read
+`4.7k * 2` and `clkdiv(50M, 115200)`.
+
 ```
-> 4.7k * 2                 SI suffixes: f p n u µ m k M G T   (4.7k = 4700)
+> 4,7k * 2                 SI suffixes: f p n u µ m k M G T   (4,7k = 4700)
   9400
 > 32Ki                     binary prefixes: Ki Mi Gi
   32768
 > hFF + b1010              prefixed literals: hFF/xFF = 0xFF, b1010 = 0b1010
   265
 > x = 8'hA5                Verilog/VHDL literals: 8'hFF, 12'b1010_1010, x"FF"
+                           8'sh80 is signed: -128, as Verilog reads it
 > x[7:4]                   bit slicing and testing: x[3]
   10
 > csr CTRL = EN[31] IRQ[30:28] ADDR[27:8] CMD[7:0]
                            name a CSR field layout; CTRL(v) decodes v
 > CTRL(0x8C01_A0F3)        REGISTER grid shows the named field bands live
-  0x8C01A0F3   EN=1 IRQ=0b000 ADDR=0xC01A0 CMD=0xF3
+  2348916979  (EN=1 IRQ=0b000 ADDR=0xC01A0 CMD=0xF3)
 > 2**10 + 0b1010           ** = power, ^ = XOR — in every context
 > sin(pi/4)                sin cos tan … log ln log2 sqrt exp abs floor ceil round
 > clog2(300)               FPGA toolkit: clog2 flog2 mask bit popcount parity
   9                        revbits byteswap16/32/64 sext zext rol ror
 > period(100M)             clock helpers, SI-formatted output
   10n
-> clkdiv(50M, 115200)      nearest divider with achieved rate + ppm error
-  434  (actual 115.207k, error +64 ppm)
-> mem(4096, 36)            RAM sizing: address bits, capacity, utilization
+> clkdiv(50M; 115200)      nearest divider with achieved rate + ppm error
+  434  (actual 115,207373272k, error +64 ppm)
+> mem(4096; 36)            RAM sizing: address bits, capacity, utilization
   147456  (addr 12 bits, 18 KiB)
 > epoch(1234567890)        Unix epoch → UTC; unit s/ms/µs/ns auto-detected
   1234567890  (2009-02-13 23:31:30 UTC · s)
-> fix(0.7071, 1, 15)       fixed-point Qm.n with quantization error shown
-  23170  (0x5A82)
-> float32(1.5)             IEEE-754 bit pattern as an integer; unfloat32/64 decodes
-  1069547520  (float32 stores 1.5)
+> fix(0,7071; 1; 15)       fixed-point Qm.n with quantization error shown
+  23170  (Q1.15, quantization error = 7,71e-6)
+> float32(1,5)             IEEE-754 bit pattern as an integer; unfloat32/64 decodes
+  1069547520  (float32 stores 1,5)
 > ans / 2                  ans = previous result; variables persist per session
 > vars                     list variables (Alt+V); del x removes one
 > help <<                  help for any operator or function
@@ -113,6 +117,17 @@ Notable rules (all covered by tests):
 - Bitwise/shift operators require integers and wrap register-like at the current
   word size (8/16/32/64, status bar); plain arithmetic is never masked.
 - `>>` is logical when unsigned, arithmetic when signed (status-bar toggle).
+- In comma mode a `,` glued to the value before it, or not followed by a digit
+  (`clkdiv(50M, 115200)`, `rol(x,1)`), is the period-mode argument separator
+  typed out of habit: an error that points at `;`, never a silent `50M × 0,5`.
+- `fix(value; m; n)` is exact in every bit of the word up to Q-formats 128 bits
+  wide: an integer is shifted, and a literal, a ratio or a function like `pi`
+  or `sqrt(2)` is evaluated at the precision that word needs. Rounding is to
+  nearest, ties to even (as `round()` does). A *stored* real — a variable or
+  `ans` — only ever held 25 digits, so in a format wider than that the note
+  says how many low bits are beyond it instead of claiming them.
+- `sin(pi)`, `cos(pi/2)` and `sin(180)` in DEG mode are 0, and `tan` at a pole
+  is an error: `pi` is a 25-digit value, and the residue of that is not a result.
 
 ## Display
 
@@ -140,7 +155,8 @@ immediately — existing history entries re-render in place:
   pattern back to the real value.
 
 Right-click a history entry to copy its result or expression, copy the value
-as hex/dec/bin, recall it, or delete it.
+as hex/dec/bin or as a C, Verilog or VHDL literal (`0xDEADBEEF`,
+`32'hDEAD_BEEF`, `x"DEAD_BEEF"`), recall it, or delete it.
 
 All settings — word size, signedness, deg/rad, notation, result base, decimal
 separator, always-on-top, window geometry — persist across restarts in a plain INI file
@@ -153,8 +169,11 @@ separator, always-on-top, window geometry — persist across restarts in a plain
 |------------------|--------------------------------------------------------|
 | Enter            | evaluate                                               |
 | Tab / Ctrl+Space | insert / open completions                              |
-| Up / Down        | recall history (or navigate completions)               |
-| Up/Down, PgUp/Dn | scroll the help or variables pane while it is showing  |
+| Up / Down        | recall history (or navigate completions); Down past    |
+|                  | the newest entry brings back the line you were typing  |
+| PgUp / PgDn      | scroll the history, help or variables pane             |
+| Shift+PgUp/PgDn  | scroll the inspector (readout, bit grid, pinned rack)  |
+| Up / Down        | scroll the help or variables pane while it is showing  |
 | Ctrl+L           | clear the history view                                 |
 | Ctrl+Shift+C     | copy last result                                       |
 | F1 or `help`     | help pane (Esc dismisses)                              |
@@ -172,9 +191,10 @@ separator, always-on-top, window geometry — persist across restarts in a plain
 | Alt+M            | cycle theme: auto (follows the OS) / light / dark      |
 | Esc              | dismiss help/variables pane, clear bit-range selection |
 
-`clear` wipes variables, csrs, and persistent history. History is stored
-as JSONL in the platform user-data directory and recalled entries
-re-evaluate through the live engine.
+`clear` wipes the history, on screen and on disk; variables and csrs are kept
+(`del <name>` removes one). Ctrl+L clears only the view. History is stored as
+JSONL in the platform user-data directory and recalled entries re-evaluate
+through the live engine.
 
 ## Android (personal build)
 

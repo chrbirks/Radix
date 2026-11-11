@@ -140,3 +140,69 @@ def test_load_unreadable_file_returns_empty(
     # Monkeypatch rather than chmod 000: chmod is a no-op when tests run as root.
     monkeypatch.setattr(Path, "open", deny_open)
     assert HistoryStore(path).load() == []
+
+
+# -- values past the int->str cap, and deleting one entry -----------------------------
+
+
+def test_append_persists_a_value_past_the_digit_cap(tmp_path: Path) -> None:
+    store = HistoryStore(tmp_path / "history.jsonl")
+    store.append("x = 2**20000", "x ← …", value=Value(2**20000), prefix="x ← ")
+    entries = store.load()
+    assert entries[0].value is not None and entries[0].value.number == 2**20000
+
+
+def test_append_returns_the_entry_as_stored(tmp_path: Path) -> None:
+    store = HistoryStore(tmp_path / "history.jsonl")
+    stored = store.append("1+1", "2", value=Value(2))
+    assert store.load() == [stored]
+
+
+def _fill(store: HistoryStore, count: int) -> None:
+    for i in range(count):
+        store.append(f"{i}+0", str(i), value=Value(i), timestamp=1000.0 + i)
+
+
+def test_remove_drops_exactly_the_one_entry(tmp_path: Path) -> None:
+    store = HistoryStore(tmp_path / "history.jsonl")
+    _fill(store, 5)
+    store.remove(store.load()[1])
+    assert [e.expression for e in store.load()] == ["0+0", "2+0", "3+0", "4+0"]
+
+
+def test_remove_keeps_entries_the_caller_never_loaded(tmp_path: Path) -> None:
+    # The UI holds at most MAX_LOADED_ENTRIES rows (and none at all after
+    # Ctrl+L). Deleting one of them rewrote the file from that list, erasing
+    # everything it did not hold.
+    from radix.history.store import MAX_LOADED_ENTRIES
+
+    path = tmp_path / "history.jsonl"
+    store = HistoryStore(path)
+    _fill(store, MAX_LOADED_ENTRIES + 5)
+    loaded = store.load()
+    assert len(loaded) == MAX_LOADED_ENTRIES
+    store.remove(loaded[0])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == MAX_LOADED_ENTRIES + 4
+    assert json.loads(lines[0])["expression"] == "0+0"  # older than anything loaded
+
+
+def test_remove_leaves_lines_it_cannot_parse_alone(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    store = HistoryStore(path)
+    _fill(store, 2)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+    store.remove(store.load()[0])
+    assert path.read_text(encoding="utf-8").splitlines()[-1] == "not json"
+    assert [e.expression for e in store.load()] == ["1+0"]
+
+
+def test_remove_of_an_unknown_entry_changes_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    store = HistoryStore(path)
+    _fill(store, 3)
+    before = path.read_text(encoding="utf-8")
+    store.remove(StoredEntry("nope", "0", timestamp=1.0))
+    assert path.read_text(encoding="utf-8") == before
+    assert list(tmp_path.iterdir()) == [path]  # no temp file left behind

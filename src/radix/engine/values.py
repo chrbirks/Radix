@@ -15,6 +15,7 @@ display metadata only — it never changes arithmetic.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import mpmath
@@ -66,6 +67,47 @@ def set_working_precision() -> None:
 # Engine-wide invariant: importing the engine sets the working precision.
 set_working_precision()
 
+# The same precision in bits (86 for 25 digits): the significand width of every
+# real the evaluator produces. A handler that needs more for one argument asks
+# for it through ``FunctionSpec.precision`` rather than raising this.
+WORKING_PREC: int = mpmath.mp.prec
+
+# Past this width an int is worth the extra pass in ``to_mpf``.
+_WIDE_INT_BITS = 1024
+
+
+def to_mpf(x: Number) -> Mpf:
+    """``mpmath.mpf(x)``, without its quadratic cost on wide round integers.
+
+    mpmath converts an int exactly before rounding, and that exact step strips
+    trailing zero bits one byte per pass over the whole number — 0.5 s for
+    ``10**300000``, on every keystroke of a preview that mentions it. Shifting
+    the zeros off first is one pass and rounds to exactly the same value.
+    """
+    if isinstance(x, int) and x.bit_length() > _WIDE_INT_BITS:
+        trailing = (x & -x).bit_length() - 1
+        if trailing >= 8:
+            return mpmath.ldexp(mpmath.mpf(x >> trailing), trailing)
+    return mpmath.mpf(x)
+
+
+def _exact_mpf(n: int) -> Mpf:
+    """``n`` as a real holding every bit, whatever the working precision."""
+    if n == 0:
+        return mpmath.mpf(0)
+    trailing = (n & -n).bit_length() - 1
+    odd = n >> trailing
+    return mpmath.ldexp(mpmath.mpf(odd, prec=odd.bit_length()), trailing)
+
+
+def fraction_to_mpf(frac: Fraction) -> Mpf:
+    """The real nearest ``frac`` at the current precision.
+
+    One rounding, of the exact quotient: converting numerator and denominator
+    separately rounds three times once either outgrows the precision.
+    """
+    return _exact_mpf(frac.numerator) / _exact_mpf(frac.denominator)
+
 
 def magnitude_fits(n: Number) -> bool:
     """True if ``n`` is small enough to render and convert in bounded time.
@@ -84,6 +126,29 @@ def magnitude_fits(n: Number) -> bool:
     return abs(int(exp + bc)) <= MAX_MAGNITUDE_BITS
 
 
+# json.dumps() of an int goes through str(), which Python caps at 4300 digits;
+# the evaluator's own ceiling is ~300000. Past this many bits an int is stored
+# as a hex string instead — hex conversion has no cap and is linear.
+_JSON_INT_BITS = 4096
+
+
+def int_to_json(n: int) -> dict[str, Any]:
+    """An int as JSON-safe data: a plain number, or ``hex`` text when wide."""
+    if n.bit_length() <= _JSON_INT_BITS:
+        return {"kind": "int", "value": n}
+    return {"kind": "int", "hex": hex(n)}
+
+
+def int_from_json(data: dict[str, Any]) -> int:
+    """Inverse of ``int_to_json``. Raises on malformed data."""
+    if "hex" in data:
+        text = data["hex"]
+        if not isinstance(text, str):
+            raise ValueError("stored hex integer is not text")
+        return int(text, 16)
+    return _int_or_raise(data["value"], "stored integer")
+
+
 def value_to_json(value: Value) -> dict[str, Any]:
     """JSON-safe representation of a value, for session persistence.
 
@@ -95,7 +160,7 @@ def value_to_json(value: Value) -> dict[str, Any]:
     from radix.engine.csr import csr_to_json
 
     if isinstance(value.number, int):
-        number: dict[str, Any] = {"kind": "int", "value": value.number}
+        number: dict[str, Any] = int_to_json(value.number)
     else:
         number = {"kind": "real", "mpf": list(value.number._mpf_)}
     return {
@@ -128,7 +193,7 @@ def value_from_json(data: dict[str, Any]) -> Value:
     number_data = data["number"]
     number: Number
     if number_data["kind"] == "int":
-        number = _int_or_raise(number_data["value"], "stored integer")
+        number = int_from_json(number_data)
     else:
         parts = number_data["mpf"]
         if not isinstance(parts, list) or len(parts) != 4:

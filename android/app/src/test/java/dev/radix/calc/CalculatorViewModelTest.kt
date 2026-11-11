@@ -233,6 +233,118 @@ class CalculatorViewModelTest {
     }
 
     @Test
+    fun `a mode change with an empty line re-renders the committed value, never its expression`() = runTest(dispatcher) {
+        // Re-previewing the text of `ans*2` after it committed 10 showed 20.
+        bridge.responses["rerender"] = { FakeBridge.intPayload(text = "10") }
+        val vm = viewModel()
+        vm.insert("ans*2")
+        vm.submit()
+        advanceUntilIdle()
+        bridge.calls.clear()
+
+        vm.setMode("word_size", 64)
+        advanceUntilIdle()
+
+        assertEquals(emptyList<String>(), bridge.calls("preview"))
+        assertEquals(1, bridge.calls("rerender").size)
+        assertEquals("10", vm.state.value.result?.text)
+        assertEquals("10", vm.state.value.card?.text)
+    }
+
+    @Test
+    fun `emptying the line falls back to the committed result`() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.insert("1+1")
+        vm.submit()
+        advanceUntilIdle()
+        bridge.responses["preview"] = { FakeBridge.errorPayload("unexpected ')'") }
+        bridge.responses["rerender"] = { FakeBridge.intPayload(text = "2") }
+        vm.insert(")")
+        advanceUntilIdle()
+        assertEquals("error", vm.state.value.result?.kind)
+
+        vm.backspace()
+        advanceUntilIdle()
+
+        // The error used to stay under an empty line, with the card dimmed.
+        assertEquals("", vm.state.value.input)
+        assertEquals("2", vm.state.value.result?.text)
+        assertEquals("2", vm.state.value.card?.text)
+    }
+
+    @Test
+    fun `emptying the line with nothing committed leaves no result`() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.insert("7")
+        advanceUntilIdle()
+        assertEquals("42", vm.state.value.result?.text)
+
+        vm.backspace()
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.result)
+        assertNull(vm.state.value.card)
+    }
+
+    @Test
+    fun `a deliberate clear stays clear when the empty line is touched again`() = runTest(dispatcher) {
+        bridge.responses["rerender"] = { FakeBridge.intPayload(text = "2") }
+        val vm = viewModel()
+        vm.insert("1+1")
+        vm.submit()
+        advanceUntilIdle()
+
+        vm.clear()
+        vm.backspace()
+        vm.setMode("signed", true)
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.result)
+        assertNull(vm.state.value.card)
+    }
+
+    @Test
+    fun `startup shows the last committed result`() = runTest(dispatcher) {
+        bridge.responses["rerender"] = { FakeBridge.intPayload(text = "255") }
+        val vm = viewModel()
+        advanceUntilIdle()
+
+        assertEquals("255", vm.state.value.result?.text)
+        assertEquals("255", vm.state.value.card?.text)
+    }
+
+    @Test
+    fun `a suggestion replaces the prefix it completes`() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.insert("1+si")
+        vm.insertFunction("sin(", replace = 2)
+        advanceUntilIdle()
+
+        assertEquals("1+sin()", vm.state.value.input)  // was "1+sisin()"
+        assertEquals("1+sin(".length, vm.state.value.cursor)
+    }
+
+    @Test
+    fun `suggestions carry how much typed text they replace`() = runTest(dispatcher) {
+        bridge.responses["suggest"] = { """[{"name": "sin", "insert": "sin(", "replace": 2}]""" }
+        val vm = viewModel()
+        vm.insert("si")
+        advanceUntilIdle()
+
+        assertEquals(2, vm.state.value.suggestions.single().replace)
+    }
+
+    @Test
+    fun `the bridge is not built until something first calls it`() {
+        var built = 0
+        val lazy = LazyBridge { built++; FakeBridge() }
+        assertEquals(0, built)  // constructing it on the main thread costs nothing
+        lazy.call("version", "{}")
+        lazy.call("version", "{}")
+        assertEquals(1, built)
+    }
+
+    @Test
     fun `save persists the bridge state`() = runTest(dispatcher) {
         val vm = viewModel()
         vm.save()

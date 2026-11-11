@@ -224,3 +224,81 @@ def test_display_pipeline_is_total(text: str) -> None:
     # Generous next to the ~0.5s worst case, but these used to take 22s or hang
     # outright — and this runs on the debounced preview, i.e. while typing.
     assert time.perf_counter() - started < 10.0
+
+
+# -- literals and intermediates that used to slip past the size budget ----------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["1e400000", "1e1000000", "1e2000000", "1e-9999999", "1.5e9999999", "0.1e-5000000"],
+)
+def test_out_of_range_literal_is_rejected_at_once(text: str) -> None:
+    # `10**1000000` was refused instantly while the literal `1e1000000` built
+    # the same million-bit integer in the lexer: 10 s per preview keystroke.
+    started = time.perf_counter()
+    with pytest.raises(CalcError):
+        Session().evaluate(text, commit=False)
+    assert time.perf_counter() - started < 1.0
+
+
+def test_largest_in_budget_literal_still_evaluates() -> None:
+    session = Session()
+    outcome = session.evaluate("1e300000", commit=False)
+    assert outcome.value is not None and outcome.value.number == 10**300000
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2**400000*2**400000*2**400000",  # each factor is in budget, the product is not
+        "2**999999 + 2**999999",
+        "(2**999999)*(2**999999)",
+        "-(2**999999) - 2**999999",
+    ],
+)
+def test_integer_arithmetic_cannot_outgrow_the_result_budget(text: str) -> None:
+    with pytest.raises(CalcError) as exc:
+        Session().evaluate(text, commit=False)
+    assert exc.value.message == "result too large"
+
+
+@pytest.mark.parametrize("text", ["1.5**1e8//1", "floor(1.5**3000000)", "(1.5**1e8) % 7"])
+def test_runaway_real_intermediate_is_stopped_before_it_becomes_an_integer(text: str) -> None:
+    started = time.perf_counter()
+    with pytest.raises(CalcError):
+        Session().evaluate(text, commit=False)
+    assert time.perf_counter() - started < 2.0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "(" * 600 + "1" + ")" * 600,
+        "-" * 3000 + "1",
+        "~" * 3000 + "1",
+        "sin(" * 600 + "1" + ")" * 600,
+        "1" + "[0]" * 3000,
+        "2" + "**2" * 3000,
+        "5[10**5000:0]",
+        "5[0:10**5000]",
+        "clkdiv(1e5000, 1)",
+    ],
+)
+def test_pathological_shape_is_a_calc_error_not_a_crash(text: str) -> None:
+    session = Session()
+    with pytest.raises(CalcError):
+        session.evaluate(text, commit=False)
+
+
+def test_arithmetic_on_a_wide_round_integer_stays_interactive() -> None:
+    # 10**300000 has 300000 trailing zero bits, the worst case for mpmath's
+    # exact int conversion: each of these took 0.5-1 s per preview keystroke.
+    session = Session()
+    session.evaluate("x = 1e300000")
+    for text in ("x + 1", "x * 1.5", "x / 7", "sqrt(x)", "x - 0.5"):
+        started = time.perf_counter()
+        outcome = session.evaluate(text, commit=False)
+        assert outcome.value is not None
+        session.format_value(outcome.value)
+        assert time.perf_counter() - started < 0.2, text

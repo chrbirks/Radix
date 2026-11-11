@@ -116,3 +116,27 @@ def test_subprocess_end_to_end() -> None:
     )
     assert bad.returncode == 1
     assert "error:" in bad.stderr
+
+
+def test_expression_may_start_with_a_minus_sign(capsys: pytest.CaptureFixture[str]) -> None:
+    # argparse read `-5+3` as an unknown option and exited 2 with a usage line.
+    assert main(["-e", "-5+3"]) == 0
+    assert capsys.readouterr().out.startswith("-2")
+    assert main(["--evaluate", "-(2**4)"]) == 0
+    assert capsys.readouterr().out.startswith("-16")
+    assert main(["--evaluate=-1"]) == 0
+    assert capsys.readouterr().out.startswith("-1")
+
+
+def test_sized_result_prints_at_its_own_width(capsys: pytest.CaptureFixture[str]) -> None:
+    # A Q64.64 word is 128 bits by construction: showing the low 32 of it
+    # (all zero for some values) beside the result helped nobody.
+    assert main(["-e", "fix(-0,3; 64; 64)"]) == 0
+    out = capsys.readouterr().out
+    assert "0xFFFF_FFFF_FFFF_FFFF_B333_3333_3333_3333" in out
+    assert "low 32 bits" not in out
+
+
+def test_narrow_sized_literal_keeps_the_word_size_views(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["-e", "8'hFF"]) == 0
+    assert "0x0000_00FF" in capsys.readouterr().out

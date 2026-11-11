@@ -26,6 +26,9 @@ class RadixClient(private val bridge: RadixBridge) {
 
     fun modes(): Modes = call("modes")
 
+    /** The last committed value under the current modes; `kind == "empty"` if there is none. */
+    fun rerender(): ResultPayload = call("rerender")
+
     fun toggleBit(bit: Int): ResultPayload = call("toggle_bit", buildJsonObject { put("bit", bit) })
 
     fun field(hi: Int, lo: Int): FieldReadout =

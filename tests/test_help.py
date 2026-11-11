@@ -59,3 +59,18 @@ def test_every_function_example_evaluates() -> None:
     for spec in FUNCTIONS.values():
         expression = spec.example.split(" = ")[0]
         session.evaluate(expression, commit=False)  # must not raise
+
+
+def test_topic_help_counts_arguments_in_plain_english() -> None:
+    assert "(1 argument)" in (topic_help("sin") or "")
+    assert "(2 arguments)" in (topic_help("clkdiv") or "")
+    assert "(1–2 arguments)" in (topic_help("revbits") or "")
+    assert "argument(s)" not in (topic_help("fix") or "")
+
+
+def test_general_help_intro_can_be_replaced_for_a_front_end_with_keys() -> None:
+    # The phone has a keypad: "keyboard-first — no buttons" is the desktop's line.
+    text = general_help(intro="Type an expression and press =.")
+    assert "Type an expression and press =." in text
+    assert "keyboard-first" not in text
+    assert "keyboard-first" in general_help()  # the desktop default is unchanged

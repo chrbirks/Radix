@@ -190,3 +190,42 @@ def test_every_help_example_evaluates_in_comma_mode() -> None:
         for example in examples:
             expression = example.removeprefix("Example: ").split(" = ")[0]
             session.evaluate(expression, commit=False)  # must not raise
+
+
+# -- a comma that can only be a mistyped argument separator ---------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "clkdiv(50M, 115200)",
+        "clkdiv(50M,115200)",
+        "rol(x,1)",
+        "mask(4),5",
+        "0xFF,5",
+        "x,5",
+        "(1+2),5",
+    ],
+)
+def test_comma_after_a_value_asks_for_the_semicolon(text: str) -> None:
+    # After a suffix, a name, a hex literal or a `)` the comma bound into the
+    # *next* number (`50M,5` = 50M × 0,5) or failed as a bare "unexpected
+    # character": the period-mode habit `f(a, b)` deserves the `;` hint here too.
+    session = make_session(**COMMA)
+    session.evaluate("x = 3")
+    with pytest.raises(CalcError) as exc:
+        session.evaluate(text)
+    assert not isinstance(exc.value, IncompleteError)
+    assert "';'" in exc.value.message, exc.value.message
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [(",5", "0,5"), ("2 * ,5", "1"), ("(,5)", "0,5"), ("x ,5", "1,5"), ("1,5 + ,5", "2")],
+)
+def test_leading_comma_decimal_still_works_where_it_is_unambiguous(text: str, want: str) -> None:
+    session = make_session(**COMMA)
+    session.evaluate("x = 3")
+    outcome = session.evaluate(text)
+    assert outcome.value is not None
+    assert session.format_value(outcome.value) == want

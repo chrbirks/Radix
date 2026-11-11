@@ -268,8 +268,11 @@ class Completer:
         cursor = self.input.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(start + length, cursor.MoveMode.KeepAnchor)
+        # After `help ` the name is a topic, not a call: `help sin(` only earns
+        # "no help for 'sin('".
+        as_topic = self.input.text()[:start].strip() == "help"
         with self.suppressed():
-            cursor.insertText(completion.insert)
+            cursor.insertText(completion.name if as_topic else completion.insert)
             self.input.setTextCursor(cursor)
         self.hide()
 

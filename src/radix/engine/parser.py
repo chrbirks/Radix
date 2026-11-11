@@ -156,7 +156,7 @@ class Parser:
         if tok.kind == "NUMBER":
             self._advance()
             assert tok.value is not None
-            return Literal(tok.span, tok.value, tok.declared_width)
+            return Literal(tok.span, tok.value, tok.declared_width, tok.exact)
         if tok.kind == "IDENT":
             self._advance()
             if self.cur.kind == "OP" and self.cur.text == "(":

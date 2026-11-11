@@ -19,12 +19,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -112,14 +114,19 @@ fun ModesPanel(
 ) {
     val p = LocalPalette.current
     ZoneCaption("MODES · RADIX $version")
+    // Material pads every interactive control out to 48dp, which silently
+    // overrode the 36dp rows below: five settings then needed more height than
+    // the panel has on a Pixel 9, and RESULT BASE was cut in half. The rows
+    // are full-width, so the smaller height is still an easy target.
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
     Column(
         Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(Dimens.cardRadius))
             .background(p.surfaceSunken)
-            .padding(10.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         ModeRow("WORD SIZE", listOf(8, 16, 32, 64).map { Choice("$it", "$it") }, "${modes.wordSize}") { onWordSize(it.toInt()) }
         // The two two-way toggles share a row so all five settings fit without scrolling.
@@ -137,6 +144,7 @@ fun ModesPanel(
         )
         ModeRow("RESULT BASE", listOf(Choice("DEC", "dec"), Choice("HEX", "hex"), Choice("BIN", "bin")), modes.intBase, onSelect = onBase)
     }
+    }
 }
 
 @Composable
@@ -148,7 +156,7 @@ private fun ModeRow(
     onSelect: (String) -> Unit,
 ) {
     Column(modifier) {
-        ZoneCaption(label, Modifier.padding(0.dp))
+        ZoneCaption(label, Modifier.padding(0.dp), compact = true)
         // 36dp rows (M3 default is 40) so all five settings fit the panel unscrolled.
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().height(36.dp)) {
             choices.forEachIndexed { index, choice ->

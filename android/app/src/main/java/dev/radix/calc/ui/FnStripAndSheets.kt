@@ -30,7 +30,7 @@ import dev.radix.calc.Suggestion
 fun FnStrip(
     suggestions: List<Suggestion>,
     onOpenSheet: () -> Unit,
-    onInsert: (String) -> Unit,
+    onInsert: (Suggestion) -> Unit,
     onInsertText: (String) -> Unit,
 ) {
     LazyRow(
@@ -39,7 +39,7 @@ fun FnStrip(
     ) {
         item { Chip("fn", active = true, onClick = onOpenSheet) }
         item { Chip("ans", active = true, onClick = { onInsertText("ans") }) }
-        items(suggestions, key = { it.name }) { s -> Chip(s.name, onClick = { onInsert(s.insert) }) }
+        items(suggestions, key = { it.name }) { s -> Chip(s.name, onClick = { onInsert(s) }) }
     }
 }
 

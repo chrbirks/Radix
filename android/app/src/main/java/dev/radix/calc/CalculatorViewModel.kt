@@ -53,8 +53,11 @@ class CalculatorViewModel(
 
     private var previewJob: Job? = null
 
-    /** What the shown result was computed from, so a mode change can re-render it. */
-    private var shownExpression: String? = null
+    /**
+     * Whether an empty line shows the last committed result. True until a
+     * deliberate [clear] wipes the screen; a commit turns it back on.
+     */
+    private var committedVisible = true
 
     init {
         viewModelScope.launch {
@@ -64,11 +67,12 @@ class CalculatorViewModel(
                 val functions = client.functions()
                 val history = client.history()
                 val suggestions = client.suggest("", 0)
+                val last = client.rerender() // the last result survives a restart
                 _state.update {
                     it.copy(
                         version = version, modes = modes, functions = functions,
                         history = history, suggestions = suggestions,
-                    )
+                    ).withCommitted(last)
                 }
             }
         }
@@ -80,9 +84,14 @@ class CalculatorViewModel(
         input.substring(0, cursor) + text + input.substring(cursor) to cursor + text.length
     }
 
-    /** `clog2(` becomes `clog2()` with the cursor between the parentheses. */
-    fun insertFunction(insert: String) = edit { input, cursor ->
-        input.substring(0, cursor) + insert + ")" + input.substring(cursor) to cursor + insert.length
+    /**
+     * `clog2(` becomes `clog2()` with the cursor between the parentheses.
+     * [replace] characters before the cursor are the prefix the chip completed
+     * (`si` + [sin] is `sin()`, not `sisin()`).
+     */
+    fun insertFunction(insert: String, replace: Int = 0) = edit { input, cursor ->
+        val start = (cursor - replace).coerceIn(0, cursor)
+        input.substring(0, start) + insert + ")" + input.substring(cursor) to start + insert.length
     }
 
     fun backspace() = edit { input, cursor ->
@@ -91,7 +100,7 @@ class CalculatorViewModel(
 
     fun clear() {
         previewJob?.cancel()
-        shownExpression = null
+        committedVisible = false
         _state.update { it.copy(input = "", cursor = 0, result = null, card = null, fieldReadout = null) }
         scheduleRefresh(previewToo = false)
     }
@@ -131,9 +140,13 @@ class CalculatorViewModel(
                         toast(result.message)
                         _state.update { it.copy(suggestions = suggestions) }
                     } else {
-                        shownExpression = text
                         _state.update { it.withResult(result).copy(suggestions = suggestions) }
                     }
+                } else if (previewToo && committedVisible) {
+                    // The line was emptied: back to the last committed result,
+                    // not whatever the deleted text last previewed (or its error).
+                    val committed = client.rerender()
+                    _state.update { it.withCommitted(committed).copy(suggestions = suggestions) }
                 } else {
                     _state.update { it.copy(suggestions = suggestions) }
                 }
@@ -156,7 +169,7 @@ class CalculatorViewModel(
                     _state.update { it.copy(result = result) } // keep the line so it can be fixed
                     return@bridge
                 }
-                shownExpression = text
+                committedVisible = true
                 val history = client.history()
                 val suggestions = client.suggest("", 0)
                 _state.update {
@@ -181,11 +194,16 @@ class CalculatorViewModel(
                 val modes = client.setMode(name, value)
                 _state.update { it.copy(modes = modes, fieldReadout = null) }
                 // Re-render what is on screen under the new modes: the live
-                // line if there is one, else the last committed expression.
-                val shown = _state.value.input.takeIf { it.isNotBlank() } ?: shownExpression
-                if (shown != null) {
-                    val result = client.preview(shown)
+                // line if there is one, else the committed *value* — re-formatted
+                // by the bridge, never re-evaluated. Previewing the committed
+                // expression's text again showed 20 for an `ans*2` that was 10.
+                val line = _state.value.input
+                if (line.isNotBlank()) {
+                    val result = client.preview(line)
                     if (!result.isInternalError) _state.update { it.withResult(result) }
+                } else if (committedVisible) {
+                    val committed = client.rerender()
+                    _state.update { it.withCommitted(committed) }
                 }
                 val history = client.history()
                 _state.update { it.copy(history = history) }
@@ -205,7 +223,6 @@ class CalculatorViewModel(
                     return@bridge
                 }
                 val line = result.input ?: return@bridge
-                shownExpression = line
                 _state.update {
                     it.withResult(result).copy(input = line, cursor = line.length, fieldReadout = null)
                 }
@@ -270,6 +287,13 @@ class CalculatorViewModel(
     private fun UiState.withResult(result: ResultPayload): UiState =
         if (result.isError) copy(result = result)
         else copy(result = result, card = result, modes = result.modes)
+
+    /** The committed result as the screen's fallback; nothing committed means a blank card. */
+    private fun UiState.withCommitted(committed: ResultPayload): UiState = when {
+        committed.isInternalError -> this
+        committed.kind == "empty" -> copy(result = null, card = null)
+        else -> withResult(committed)
+    }
 
     private fun toast(message: String?) = _state.update { it.copy(toast = message ?: "internal: unknown error") }
 

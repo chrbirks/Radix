@@ -11,6 +11,11 @@ status) and `bit_changed`/`warn` (measurement cursor / attention) carry the
 other two channels. `error` stands alone. Typography pairs a readout face
 (JetBrains Mono, every number and expression) with a silkscreen face (IBM
 Plex Sans Condensed SemiBold, uppercase micro-labels only).
+
+Every colour that renders *text* — number literals, lit digits, the warning
+note — holds WCAG AA (4.5:1) against the chassis and the raised surface in both
+schemes; `tests/test_ui_fixes.py` checks it. The dark scheme used to share the
+light scheme's trace blue, 2.3:1 on the input bar: the dimmest text on screen.
 """
 
 from __future__ import annotations
@@ -63,20 +68,20 @@ LIGHT = Palette(
     accent="#2563EB",
     accent_text="#FFFFFF",
     error="#C4344F",
-    ok="#0078FF",
-    warn="#B87D0F",
+    ok="#006AE6",
+    warn="#946200",
     chip_bg="#EBEEEC",
     chip_bg_active="#DCE6FB",
-    bit_on="#0078FF",
+    bit_on="#006AE6",
     bit_off="#E1E7E3",
-    bit_changed="#B87D0F",
-    float_sign="#B87D0F",
-    float_exp="#0078FF",
+    bit_changed="#946200",
+    float_sign="#946200",
+    float_exp="#006AE6",
     float_man="#7C5CBF",
-    field_bands=("#0078FF", "#8B5CF6", "#0D9488", "#EA8C00", "#DB2777", "#64748B"),
-    syn_number="#0078FF",
+    field_bands=("#006AE6", "#8B5CF6", "#0D9488", "#EA8C00", "#DB2777", "#64748B"),
+    syn_number="#006AE6",
     syn_function="#7C5CBF",
-    syn_operator="#B87D0F",
+    syn_operator="#946200",
 )
 
 DARK = Palette(
@@ -91,20 +96,20 @@ DARK = Palette(
     accent="#3498DB",
     accent_text="#1B2838",
     error="#FF6B6B",
-    ok="#0078FF",
-    warn="#F39C12",
+    ok="#74BCFF",
+    warn="#F5A623",
     chip_bg="#34495E",
     chip_bg_active="#2E5978",
-    bit_on="#0078FF",
+    bit_on="#74BCFF",
     bit_off="#3B5068",
-    bit_changed="#F39C12",
-    float_sign="#F39C12",
-    float_exp="#0078FF",
+    bit_changed="#F5A623",
+    float_sign="#F5A623",
+    float_exp="#74BCFF",
     float_man="#BB86FC",
-    field_bands=("#0078FF", "#BB86FC", "#14B8A6", "#FB923C", "#F472B6", "#94A3B8"),
-    syn_number="#0078FF",
+    field_bands=("#74BCFF", "#BB86FC", "#14B8A6", "#FB923C", "#F472B6", "#94A3B8"),
+    syn_number="#74BCFF",
     syn_function="#BB86FC",
-    syn_operator="#F39C12",
+    syn_operator="#F5A623",
 )
 
 MONO_FAMILY = "JetBrains Mono"  # readout face: every number and expression

@@ -94,8 +94,8 @@ diagnostics.
   and state gone), so reinstall before adb-driven UI checks. Verify UI
   changes on the headless emulator with `adb exec-out screencap -p` and
   `input tap` — setup and the disk/AVD gotchas are in `android/README.md`.
-  The phone register has no changed-bit outlines (the desktop's orange
-  "flipped since last value" marks) — dropped on request.
+  Neither register outlines changed bits (the orange "flipped since last
+  value" marks): dropped on request, on the desktop first and then the phone.
 - The app icon (radical-sign mark, `#2563eb` tile) lives at
   `src/radix/ui_qt/icons/icon.png` (runtime, via `theme.load_app_icon()`) and
   `packaging/icon.ico` (PyInstaller `EXE(icon=...)`, Windows/macOS only —

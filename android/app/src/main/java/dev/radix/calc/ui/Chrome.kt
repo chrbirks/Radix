@@ -20,14 +20,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.radix.calc.Modes
 import dev.radix.calc.Panel
 
-/** Silkscreen-style section caption, like `ui_qt/zones.py`. */
+/**
+ * Silkscreen-style section caption, like `ui_qt/zones.py`.
+ *
+ * [compact] drops the line height to the glyphs: the default text style gives
+ * a 9sp caption a 24sp line, which is fine over a card but costs the MODES
+ * panel 12dp per setting — enough to push its last row off the screen.
+ */
 @Composable
-fun ZoneCaption(text: String, modifier: Modifier = Modifier) {
+fun ZoneCaption(text: String, modifier: Modifier = Modifier, compact: Boolean = false) {
     val p = LocalPalette.current
     Text(
         text = text,
@@ -35,6 +42,7 @@ fun ZoneCaption(text: String, modifier: Modifier = Modifier) {
         fontFamily = MonoFont,
         fontSize = Dimens.zoneCaption,
         letterSpacing = 2.sp,
+        lineHeight = if (compact) 12.sp else TextUnit.Unspecified,
         modifier = modifier.padding(start = 4.dp, top = 4.dp, bottom = 3.dp),
     )
 }

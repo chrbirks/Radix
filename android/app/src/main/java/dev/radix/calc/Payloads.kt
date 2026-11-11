@@ -65,8 +65,9 @@ data class FnItem(
 @Serializable
 data class FnGroup(val category: String, val items: List<FnItem>)
 
+/** [replace]: characters left of the cursor this chip stands in for (the typed prefix). */
 @Serializable
-data class Suggestion(val name: String, val insert: String)
+data class Suggestion(val name: String, val insert: String, val replace: Int = 0)
 
 @Serializable
 data class FieldReadout(val text: String, val input: String)

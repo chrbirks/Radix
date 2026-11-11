@@ -14,6 +14,11 @@ groups first — is also parenthesized. That surfaces surprising precedence like
 preview. A superscript power (``2³``) is self-grouping, so it is treated as an
 atom and never gains clarifying parens; unary operators are likewise left as-is
 — clarifying parens apply to a binary under a binary only.
+
+A *substituted* value is text, not syntax, so it is grouped wherever pasting
+it bare would change the reading: with ``x = -2``, ``x**2`` is ``(-2)²`` (not
+``-2²``, which is -4) and ``2 - x`` is ``2 - (-2)``; a value shown in
+scientific notation is grouped under a power the same way.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from collections.abc import Mapping
 
 from radix.engine import numsyntax
 from radix.engine.csr import flatten_spec
-from radix.engine.formatter import format_number
+from radix.engine.formatter import format_number, superscript
 from radix.engine.nodes import (
     Assign,
     Binary,
@@ -37,9 +42,6 @@ from radix.engine.nodes import (
 from radix.engine.numsyntax import NumSyntax
 from radix.engine.parser import BINARY_BP, SLICE_BP, UNARY_BP
 from radix.engine.values import Value
-
-_SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-                 "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻"}
 
 _OP_DISPLAY = {"*": "×", "^": "XOR"}
 
@@ -92,14 +94,18 @@ def _render(
         args = sep.join(_render(a, variables, ans, 0, syntax=syntax) for a in node.args)
         return f"{node.func}({args})"
     if isinstance(node, Slice):
-        operand = _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
+        operand = _group_value(
+            node.operand, _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
+        )
         lsb = _render(node.lsb, variables, ans, 0, syntax=syntax)
         if node.msb is None:
             return f"{operand}[{lsb}]"
         msb = _render(node.msb, variables, ans, 0, syntax=syntax)
         return f"{operand}[{msb}:{lsb}]"
     if isinstance(node, Field):
-        operand = _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
+        operand = _group_value(
+            node.operand, _render(node.operand, variables, ans, SLICE_BP, syntax=syntax)
+        )
         return f"{operand}.{node.name}"
     if isinstance(node, Assign):
         return f"{node.target} ← {_render(node.expr, variables, ans, 0, syntax=syntax)}"
@@ -119,15 +125,17 @@ def _render_binary(
         superscript = _superscript_exponent(node.right)
         if superscript is not None:
             inner = _render(node.left, variables, ans, 0, syntax=syntax)
-            base = inner if _is_atom(node.left) else f"({inner})"
+            base = inner if _is_atom(node.left) and _reads_as_atom(inner) else f"({inner})"
             # A superscript is self-grouping: only *required* parens, never
             # clarifying ones, so `2**3 + 1` stays `2³ + 1`.
             return _paren(base + superscript, bp, parent_bp)
-        left = _render(node.left, variables, ans, bp, bp, syntax)
-        right = _render(node.right, variables, ans, bp, bp, syntax)  # right-assoc
+        left = _group_value(node.left, _render(node.left, variables, ans, bp, bp, syntax))
+        right = _group_negative(
+            node.right, _render(node.right, variables, ans, bp, bp, syntax)  # right-assoc
+        )
         return _clarify(f"{left}**{right}", bp, parent_bp, parent_op_bp)
     left = _render(node.left, variables, ans, bp, bp, syntax)
-    right = _render(node.right, variables, ans, bp + 1, bp, syntax)
+    right = _group_negative(node.right, _render(node.right, variables, ans, bp + 1, bp, syntax))
     op = _OP_DISPLAY.get(node.op, node.op)
     return _clarify(f"{left} {op} {right}", bp, parent_bp, parent_op_bp)
 
@@ -165,7 +173,7 @@ def _superscript_exponent(node: Node) -> str | None:
         and isinstance(node.value, int)
         and 0 <= node.value < _MAX_SUPERSCRIPT
     ):
-        return "".join(_SUPERSCRIPTS[d] for d in str(node.value))
+        return superscript(node.value)
     if (
         isinstance(node, Unary)
         and node.op == "-"
@@ -173,12 +181,33 @@ def _superscript_exponent(node: Node) -> str | None:
         and isinstance(node.operand.value, int)
         and 0 <= node.operand.value < _MAX_SUPERSCRIPT
     ):
-        return "".join(_SUPERSCRIPTS[d] for d in f"-{node.operand.value}")
+        return superscript(-node.operand.value) if node.operand.value else "⁻⁰"
     return None
 
 
 def _is_atom(node: Node) -> bool:
     return isinstance(node, (Literal, Name, Call, Slice))
+
+
+def _reads_as_atom(text: str) -> bool:
+    """False for substituted text that only *looks* like one token.
+
+    A name renders as its value, and ``-2`` or ``1.5e-9`` glued to an operator
+    regroups: ``-2²`` is -(2²), ``1.5e-9²`` squares nothing but the 9.
+    """
+    if text.startswith("-"):
+        return False
+    return not (text[:1].isdigit() and "e" in text)
+
+
+def _group_value(node: Node, text: str) -> str:
+    """Parenthesize a substituted name wherever a postfix or power follows it."""
+    return f"({text})" if isinstance(node, Name) and not _reads_as_atom(text) else text
+
+
+def _group_negative(node: Node, text: str) -> str:
+    """Parenthesize a substituted negative on the right of a binary operator."""
+    return f"({text})" if isinstance(node, Name) and text.startswith("-") else text
 
 
 def _paren(text: str, bp: int, parent_bp: int) -> str:

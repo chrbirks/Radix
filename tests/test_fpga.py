@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import random
+from collections.abc import Callable
+from fractions import Fraction
+
+import mpmath
 import pytest
 
 from engine_harness import run, run_number
@@ -208,7 +213,7 @@ def test_fix_attaches_viz_payload() -> None:
     assert viz.error_lsb_text == "0 LSB"
     assert len(viz.bit_weights) == 16
     assert (viz.bit_weights[15], viz.bit_weights[14], viz.bit_weights[0]) == (
-        "-2^0", "2^-1", "2^-15",
+        "-2⁰", "2⁻¹", "2⁻¹⁵",
     )
 
     outcome = session.evaluate("unfix(0x5A82, 1, 15)")
@@ -223,7 +228,7 @@ def test_fix_attaches_viz_payload() -> None:
     viz = outcome.value.viz
     assert isinstance(viz, FixedPointViz)
     assert (viz.hex_text, viz.dec_text, viz.dec_signed_text) == ("0xFE8", "4072", "-24")
-    assert viz.bit_weights[11] == "-2^7"
+    assert viz.bit_weights[11] == "-2⁷"
 
 
 def test_fix_quantization_error_is_reported_in_lsbs() -> None:
@@ -258,7 +263,7 @@ def test_float_pack_golden_and_viz() -> None:
     assert isinstance(viz, FloatBitsViz)
     assert (viz.width, viz.exp_width, viz.man_width) == (32, 8, 23)
     assert viz.hex_text == "0x3FC0_0000"
-    assert viz.exponent_text == "127 - bias 127 = 2^0"
+    assert viz.exponent_text == "127 - bias 127 = 2⁰"
     assert viz.mantissa_text == "1.5"
     assert viz.rounded is False
     assert outcome.value.note == "float32 stores 1.5"
@@ -338,3 +343,172 @@ def test_float32_rounds_the_exact_value_not_a_float64_detour() -> None:
     # Via float64 the tail would be lost first, leaving a tie that rounds down.
     assert run_number("float32(1 + 2**-24 + 2**-60)") == 0x3F80_0001
     assert run_number("float32(1 + 2**-24)") == 0x3F80_0000  # exact tie: to even
+
+
+# -- fixed point: wide formats, checked against exact rational arithmetic -------------
+#
+# fix() used to push its argument through the 86-bit working precision before
+# scaling, so anything needing more significant bits came back with wrong low
+# bits and a note claiming the result was exact.
+
+
+def _exact_fix(x: Fraction, m: int, n: int) -> int:
+    """Independent oracle: round-half-even of x·2^n as a two's-complement word."""
+    total = m + n
+    scaled = round(x * (1 << n))  # Fraction.__round__ is ties-to-even
+    assert -(1 << (total - 1)) <= scaled <= (1 << (total - 1)) - 1
+    return scaled & ((1 << total) - 1)
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("fix(2**86 + 1, 88, 0)", 2**86 + 1),  # one bit past the working precision
+        ("fix(2**127 - 1, 128, 0)", 2**127 - 1),  # largest Q128.0 value: must fit
+        ("fix(-2**127, 128, 0)", 1 << 127),
+        ("fix(12345678901234567890123456789, 100, 28)", 12345678901234567890123456789 << 28),
+        ("fix(1e38, 128, 0)", 10**38),
+        ("fix(-(2**100 + 3), 102, 0)", (-(2**100 + 3)) & ((1 << 102) - 1)),
+    ],
+)
+def test_fix_keeps_every_bit_of_an_integer(text: str, want: int) -> None:
+    assert run_number(text) == want
+
+
+@pytest.mark.parametrize(
+    ("text", "x", "m", "n"),
+    [
+        ("0.1", Fraction(1, 10), 1, 127),
+        ("0.1", Fraction(1, 10), 1, 91),
+        ("0.7071", Fraction(7071, 10000), 1, 127),
+        ("-0.3", Fraction(-3, 10), 1, 100),
+        ("1/3", Fraction(1, 3), 1, 86),
+        ("1/3", Fraction(1, 3), 1, 127),
+        ("-2/3", Fraction(-2, 3), 1, 85),
+        ("123456.789", Fraction(123456789, 1000), 18, 110),
+        ("4.7k / 3", Fraction(4700, 3), 12, 116),
+        ("2**63 - 2**-64", (1 << 63) - Fraction(1, 2**64), 64, 64),  # largest Q64.64
+        ("0.5 - 2**-128", Fraction(1, 2) - Fraction(1, 2**128), 0, 128),  # largest Q0.128
+        ("1 + 2**-100", 1 + Fraction(1, 2**100), 2, 100),
+    ],
+)
+def test_fix_is_exact_for_literals_and_rationals_in_wide_formats(
+    text: str, x: Fraction, m: int, n: int
+) -> None:
+    assert run_number(f"fix({text}, {m}, {n})") == _exact_fix(x, m, n)
+
+
+def test_fix_reports_the_real_quantization_error_in_a_wide_format() -> None:
+    from radix.engine.viz import FixedPointViz
+
+    outcome = Session().evaluate("fix(0.1, 1, 127)")
+    assert outcome.value is not None
+    viz = outcome.value.viz
+    assert isinstance(viz, FixedPointViz)
+    # 0.1 has no finite binary expansion: an exact claim here is always wrong.
+    assert viz.error_lsb != 0
+    assert 0 < viz.error_lsb <= 0.5
+    assert outcome.value.note is not None and "= 0.0" not in outcome.value.note
+
+
+@pytest.mark.parametrize(
+    ("text", "oracle", "m", "n"),
+    [
+        ("pi", lambda: mpmath.pi, 3, 125),
+        ("sqrt(2)", lambda: mpmath.sqrt(2), 2, 126),
+        ("sin(1)", lambda: mpmath.sin(1), 1, 100),
+        ("exp(1) / 3", lambda: mpmath.e / 3, 1, 127),
+    ],
+)
+def test_fix_evaluates_a_transcendental_at_the_precision_the_format_needs(
+    text: str, oracle: Callable[[], object], m: int, n: int
+) -> None:
+    with mpmath.workprec(600):
+        want = int(mpmath.nint(oracle() * (1 << n)))
+    assert run_number(f"fix({text}, {m}, {n})") == want
+
+
+def test_fix_flags_low_bits_a_stored_real_cannot_supply() -> None:
+    from radix.engine.viz import FixedPointViz
+
+    session = Session()
+    session.evaluate("x = 0.1")  # a variable holds the 25-digit real, nothing more
+    outcome = session.evaluate("fix(x, 1, 127)")
+    assert outcome.value is not None
+    viz = outcome.value.viz
+    assert isinstance(viz, FixedPointViz)
+    assert viz.error_lsb > 1  # not 0: the low bits are padding
+    assert viz.error_lsb_text.startswith("≤")
+    assert outcome.value.note is not None and "25-digit" in outcome.value.note
+
+    # The same variable in a format the 25 digits do cover is reported normally.
+    narrow = session.evaluate("fix(x, 1, 31)")
+    assert narrow.value is not None and narrow.value.note is not None
+    assert "25-digit" not in narrow.value.note
+
+
+@pytest.mark.parametrize("total", [33, 64, 86, 87, 88, 96, 127, 128])
+def test_fix_unfix_roundtrip_is_exact_at_every_width(total: int) -> None:
+    rng = random.Random(total)
+    for _ in range(40):
+        m = rng.randint(0, total)
+        raw = rng.getrandbits(total)
+        assert run_number(f"fix(unfix({raw}, {m}, {total - m}), {m}, {total - m})") == raw
+
+
+def test_unfix_decodes_a_wide_word_exactly() -> None:
+    number = run_number("unfix(2**127 - 1, 1, 127)")
+    sign, man, exp, _bc = number._mpf_
+    assert (-1 if sign else 1) * Fraction(man) * Fraction(2) ** exp == Fraction(
+        2**127 - 1, 2**127
+    )
+
+
+def test_unfix_says_when_the_raw_value_was_wider_than_the_format() -> None:
+    session = Session()
+    wrapped = session.evaluate("unfix(0x15A82, 1, 15)")
+    assert wrapped.value is not None and wrapped.value.note is not None
+    assert "wrapped" in wrapped.value.note and "16" in wrapped.value.note
+    # In range either as an unsigned word or as a signed value: nothing to flag.
+    for text in ("unfix(0x5A82, 1, 15)", "unfix(0xFFFF, 1, 15)", "unfix(-1, 1, 15)"):
+        plain = session.evaluate(text)
+        assert plain.value is not None and plain.value.note == "from Q1.15"
+
+
+def test_fix_range_error_states_the_range_as_real_values() -> None:
+    with pytest.raises(EvalError) as exc:
+        run("fix(1.5, 1, 15)")
+    assert exc.value.message == "fix: 1.5 does not fit Q1.15 (range -1.0 to 0.999969482)"
+    with pytest.raises(EvalError) as exc:
+        run("fix(1e300, 64, 64)")
+    assert len(exc.value.message) < 90  # was a 78-digit raw range
+    with pytest.raises(EvalError) as exc:
+        run("fix(1,5; 1; 15)", decimal_mode="comma")
+    assert exc.value.message == "fix: 1,5 does not fit Q1.15 (range -1,0 to 0,999969482)"
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("fix(0.5, 1, 15)", "0 LSB"),  # exact
+        ("fix(1e-30, 1, 15)", "<0.01 LSB"),  # a real, sub-display error is not zero
+        ("fix(1e-5000, 1, 15)", "<0.01 LSB"),  # even when it underflows a float
+        ("fix(0.7071, 1, 15)", "0.25 LSB"),
+    ],
+)
+def test_fix_lsb_readout_separates_exact_from_tiny(text: str, want: str) -> None:
+    from radix.engine.viz import FixedPointViz
+
+    outcome = Session().evaluate(text)
+    assert outcome.value is not None
+    viz = outcome.value.viz
+    assert isinstance(viz, FixedPointViz)
+    assert viz.error_lsb_text == want
+
+
+def test_fix_summary_states_the_tie_rule() -> None:
+    from radix.engine.functions import FUNCTIONS
+
+    assert "ties to even" in FUNCTIONS["fix"].summary
+    assert run_number("fix(2.5, 4, 0)") == 2  # ...and that is what it does
+    assert run_number("fix(3.5, 4, 0)") == 4

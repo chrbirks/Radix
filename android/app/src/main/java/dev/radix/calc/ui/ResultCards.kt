@@ -3,10 +3,15 @@ package dev.radix.calc.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +35,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -89,6 +95,7 @@ private fun EmptyCard() {
  * that make it. Tap a bit to toggle it; drag across bits to read a field.
  * All numbers come from the payload — this only paints.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RegisterCard(
     payload: ResultPayload,
@@ -104,6 +111,11 @@ fun RegisterCard(
     var gridOrigin by remember { mutableStateOf(Offset.Zero) }
     var dragStart by remember { mutableStateOf<Int?>(null) }
     var dragEnd by remember { mutableStateOf<Int?>(null) }
+    // The bit under the finger when it came down. A drag is only recognised
+    // once the finger has moved past the touch slop, and by then a quick drag
+    // has left its first cell: anchoring there read [14:8] for a drag begun on
+    // bit 15, or nothing at all when the slop ran out over a gap.
+    var downBit by remember { mutableStateOf<Int?>(null) }
     val selection: IntRange? = if (dragStart != null && dragEnd != null) {
         minOf(dragStart!!, dragEnd!!)..maxOf(dragStart!!, dragEnd!!)
     } else null
@@ -123,8 +135,18 @@ fun RegisterCard(
                 .systemGestureExclusion()
                 .onGloballyPositioned { gridOrigin = it.boundsInRoot().topLeft }
                 .pointerInput(total) {
+                    awaitEachGesture {
+                        // Initial pass: seen before the cells' own tap handling.
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        downBit = bitAt(down.position)
+                    }
+                }
+                .pointerInput(total) {
                     detectDragGestures(
-                        onDragStart = { pos -> dragStart = bitAt(pos); dragEnd = dragStart },
+                        onDragStart = { pos ->
+                            dragStart = downBit ?: bitAt(pos)
+                            dragEnd = bitAt(pos) ?: dragStart
+                        },
                         onDrag = { change, _ -> bitAt(change.position)?.let { dragEnd = it } },
                         onDragEnd = {
                             // Read the state holders, not `selection`: this lambda is
@@ -169,11 +191,25 @@ fun RegisterCard(
             }
         }
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("DEC ", color = p.muted, fontFamily = MonoFont, fontSize = 12.sp)
-            Text(payload.dec.orEmpty(), color = p.text, fontFamily = MonoFont, fontSize = 12.sp)
-            Text("  ·  ", color = p.hairline, fontFamily = MonoFont, fontSize = 12.sp)
-            Text(payload.hex.orEmpty(), color = p.synNumber, fontFamily = MonoFont, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        // Each value is one unbreakable item: at 64 bits they do not fit one
+        // line, and the hex used to wrap *inside* the number (…CAFE_F0 / 0D) —
+        // which, cut off by a short card, read as a complete shorter value.
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row {
+                Text("DEC ", color = p.muted, fontFamily = MonoFont, fontSize = 12.sp)
+                Text(
+                    payload.dec.orEmpty(), color = p.text, fontFamily = MonoFont, fontSize = 12.sp,
+                    maxLines = 1, softWrap = false,
+                )
+            }
+            Text(
+                payload.hex.orEmpty(), color = p.synNumber, fontFamily = MonoFont, fontSize = 12.sp,
+                maxLines = 1, softWrap = false,
+            )
             if (payload.truncated) {
                 Text("⚠ wider than word", color = p.warn, fontFamily = MonoFont, fontSize = 10.sp)
             }
@@ -213,8 +249,11 @@ fun RealCard(payload: ResultPayload) {
             payload.text, color = p.text, fontFamily = MonoFont, fontSize = 34.sp,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
         )
+        // The echo only when it says something the value above does not.
+        val echo = payload.normalized.takeIf { it.isNotEmpty() && it != payload.text }
+        val notation = payload.modes.notation.uppercase().replace('_', '·')
         Text(
-            "${payload.normalized}  ·  ${payload.modes.notation.uppercase().replace('_', '·')}",
+            listOfNotNull(echo, notation).joinToString("  ·  "),
             color = p.muted, fontFamily = MonoFont, fontSize = 11.sp,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
         )
@@ -230,9 +269,14 @@ fun InfoCard(text: String) {
     val p = LocalPalette.current
     ZoneCaption("INFO")
     Card(Modifier.fillMaxSize()) {
+        // The engine's text is laid out in columns up to ~100 characters wide.
+        // Wrapped to a phone's 50 it lost them; unwrapped, it scrolls both ways.
         Text(
-            text, color = p.text, fontFamily = MonoFont, fontSize = 11.sp,
-            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+            text, color = p.text, fontFamily = MonoFont, fontSize = 11.sp, lineHeight = 16.sp,
+            softWrap = false,
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .horizontalScroll(rememberScrollState()),
         )
     }
 }

@@ -30,6 +30,9 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
+from radix.engine import numsyntax
+from radix.engine.help import localize
+from radix.engine.numsyntax import NumSyntax
 from radix.engine.values import Value
 from radix.ui_qt.theme import Palette
 
@@ -150,6 +153,8 @@ def _scaled(base: QFont, factor: float) -> QFont:
 
 # Kept short enough that both columns fit the 520px minimum window; the
 # painter elides and drops trailing rows anyway if a theme's metrics differ.
+# Written once, in period syntax, like the help examples: `hint_rows` localizes
+# them, so what is shown is always something the current mode accepts.
 EMPTY_HINT: tuple[tuple[str, str], ...] = (
     ("4.7k * 2", "SI and binary prefixes"),
     ("0xFF << 2", "hex/dec/bin + bit grid"),
@@ -172,10 +177,21 @@ class HistoryView(QListView):
     def __init__(self, palette: Palette) -> None:
         super().__init__()
         self.palette_tokens = palette
+        self.syntax: NumSyntax = numsyntax.DEFAULT
 
     def set_palette(self, palette: Palette) -> None:
         self.palette_tokens = palette
         self.viewport().update()
+
+    def set_syntax(self, syntax: NumSyntax) -> None:
+        """Write the examples in `syntax` (`clkdiv(50M; 115200)` in comma mode)."""
+        if syntax != self.syntax:
+            self.syntax = syntax
+            self.viewport().update()
+
+    def hint_rows(self) -> list[tuple[str, str]]:
+        """(example, description) rows as painted: typed as shown, each one works."""
+        return [(localize(example, self.syntax), note) for example, note in EMPTY_HINT]
 
     def _is_empty(self) -> bool:
         model = self.model()
@@ -191,14 +207,13 @@ class HistoryView(QListView):
         note_font = _scaled(self.font(), 0.85)
         example_metrics = QFontMetrics(example_font)
         note_metrics = QFontMetrics(note_font)
-        column = max(example_metrics.horizontalAdvance(text) for text, _ in EMPTY_HINT)
-        width = column + HINT_GAP + max(
-            note_metrics.horizontalAdvance(note) for _, note in EMPTY_HINT
-        )
+        hints = self.hint_rows()
+        column = max(example_metrics.horizontalAdvance(text) for text, _ in hints)
+        width = column + HINT_GAP + max(note_metrics.horizontalAdvance(note) for _, note in hints)
         rect = self.viewport().rect()
         # Only draw the rows that actually fit: a half-painted last line reads
         # as breakage, and this pane can be as short as PANE_MIN_H.
-        rows = min(len(EMPTY_HINT), max(0, (rect.height() - 2 * ROW_PAD_TOP) // HINT_LINE))
+        rows = min(len(hints), max(0, (rect.height() - 2 * ROW_PAD_TOP) // HINT_LINE))
         if rows == 0:
             painter.end()
             return
@@ -206,7 +221,7 @@ class HistoryView(QListView):
         note_left = left + column + HINT_GAP
         note_width = rect.width() - note_left - ROW_PAD_H
         top = max(ROW_PAD_TOP, (rect.height() - rows * HINT_LINE) // 2)
-        for row, (example, note) in enumerate(EMPTY_HINT[:rows]):
+        for row, (example, note) in enumerate(hints[:rows]):
             y = top + row * HINT_LINE
             painter.setFont(example_font)
             painter.setPen(QColor(p.syn_number))

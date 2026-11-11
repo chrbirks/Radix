@@ -6,6 +6,7 @@ executable spec for the register card, the readout and the error underline.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -310,3 +311,115 @@ def test_suggest_ignores_hex_and_si_literals(bridge: Bridge) -> None:
     assert len(bridge.suggest("0xBEEF", 6)) == 12
     assert len(bridge.suggest("4k", 2)) == 12
     assert len(bridge.suggest("1 + cl", 6)) < 12
+
+
+# -- re-rendering what is on screen after a mode change ---------------------------------
+
+
+def test_rerender_reformats_the_committed_value_not_its_expression(bridge: Bridge) -> None:
+    # The phone used to re-preview the last expression's *text* after a mode
+    # change: `ans*2` then showed 20 where it had just committed 10.
+    bridge.evaluate("5")
+    assert bridge.evaluate("ans*2")["text"] == "10"
+    bridge.set_mode("word_size", 64)
+    p = bridge.rerender()
+    assert (p["kind"], p["text"]) == ("int", "10")
+    assert len(p["nibbles"]) == 16  # ...under the new word size
+    assert bridge.session.ans is not None and bridge.session.ans.number == 10
+
+
+def test_rerender_keeps_the_assignment_badge_and_base(bridge: Bridge) -> None:
+    bridge.evaluate("x = 1")
+    bridge.evaluate("x = x + 1")
+    bridge.set_mode("int_base", "hex")
+    p = bridge.rerender()
+    assert (p["text"], p["prefix"]) == ("0x2", "x")
+
+
+def test_rerender_is_unmoved_by_previews_and_non_value_commands(bridge: Bridge) -> None:
+    bridge.evaluate("7")
+    bridge.preview("100 + 1")
+    bridge.evaluate("x = 3")
+    bridge.evaluate("del x")
+    assert bridge.rerender()["text"] == "3"
+
+
+def test_rerender_after_a_restart_shows_the_last_result(bridge: Bridge, tmp_path: Path) -> None:
+    bridge.evaluate("0xFF")
+    reborn = Bridge(str(tmp_path), bridge.state_json())
+    assert reborn.rerender()["text"] == "255"
+
+
+def test_rerender_with_nothing_committed_is_empty(bridge: Bridge) -> None:
+    assert bridge.rerender()["kind"] == "empty"
+    bridge.evaluate("9")
+    bridge.evaluate("clear")
+    assert bridge.rerender()["kind"] == "empty"
+
+
+def test_rerender_is_reachable_over_rpc(bridge: Bridge) -> None:
+    from radix.bridge import rpc
+
+    rpc(bridge, "evaluate", json.dumps({"text": "6*7"}))
+    assert json.loads(rpc(bridge, "rerender", "{}"))["text"] == "42"
+
+
+# -- previews must not read as done -------------------------------------------------------
+
+
+def test_preview_of_a_command_says_what_pressing_equals_will_do(bridge: Bridge) -> None:
+    bridge.evaluate("x = 1")
+    assert bridge.preview("del x")["info_text"] == "press = to delete x"
+    assert (
+        bridge.preview("clear")["info_text"]
+        == "press = to clear history (variables & csrs kept)"
+    )
+    assert bridge.preview("csr C = A[3:0]")["info_text"] == "press = to define csr C"
+    assert "x" in bridge.session.variables  # nothing happened yet
+    assert bridge.evaluate("del x")["info_text"] == "deleted x"
+    assert bridge.evaluate("csr C = A[3:0]")["info_text"] == "csr C = A[3:0]"
+
+
+# -- suggestion chips ---------------------------------------------------------------------
+
+
+def test_suggestion_says_how_much_typed_text_it_replaces(bridge: Bridge) -> None:
+    # Tapping `sin` after typing `si` spliced the whole name in: `sisin()`.
+    assert {s["name"]: s["replace"] for s in bridge.suggest("si", 2)} == {"sin": 2, "sinh": 2}
+    assert [s["replace"] for s in bridge.suggest("1 + clo", 7)] == [3]
+    assert all(s["replace"] == 0 for s in bridge.suggest("", 0))
+    assert all(s["replace"] == 0 for s in bridge.suggest("1 + ", 4))
+
+
+# -- phone-facing text --------------------------------------------------------------------
+
+
+def test_help_on_the_phone_does_not_describe_the_desktop(bridge: Bridge) -> None:
+    text = bridge.evaluate("help")["info_text"]
+    assert "keyboard-first" not in text and "no buttons" not in text
+    assert "press =" in text
+
+
+# -- a value past the int->str cap ---------------------------------------------------------
+
+
+def test_huge_value_commits_and_keeps_state_saving(bridge: Bridge, tmp_path: Path) -> None:
+    p = bridge.evaluate("y = 2**20000")
+    assert p["kind"] == "int"  # was "internal: Exceeds the limit (4300 digits)…"
+    assert len(bridge.history()) == 1
+    reborn = Bridge(str(tmp_path), bridge.state_json())
+    assert reborn.session.variables["y"].number == 2**20000
+    assert reborn.history()[0]["expression"] == "y = 2**20000"
+    assert bridge.evaluate("1+1")["text"] == "2"
+
+
+def test_delete_history_keeps_entries_that_were_never_loaded(tmp_path: Path) -> None:
+    from radix.history.store import MAX_LOADED_ENTRIES, HistoryStore
+
+    store = HistoryStore(tmp_path / "history.jsonl")
+    for i in range(MAX_LOADED_ENTRIES + 3):
+        store.append(f"{i}+0", str(i), timestamp=1000.0 + i)
+    bridge = Bridge(str(tmp_path))
+    bridge.delete_history(0)
+    assert len(store.path.read_text(encoding="utf-8").splitlines()) == MAX_LOADED_ENTRIES + 2
+    assert bridge.history()[0]["expression"] == "4+0"

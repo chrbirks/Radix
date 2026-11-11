@@ -33,10 +33,15 @@ from PySide6.QtWidgets import (
 )
 
 from radix.engine.csr import Csr, format_field_value
-from radix.engine.formatter import FloatViews, format_int_base, integer_views
+from radix.engine.formatter import (
+    FloatViews,
+    format_int_base,
+    integer_views,
+    power_of_two,
+)
 from radix.engine.viz import FixedPointViz, FloatBitsViz
 from radix.ui_qt.theme import FONT_MICRO, Palette
-from radix.ui_qt.zones import ZoneCaption, margin_wrap
+from radix.ui_qt.zones import ShrinkToFitLabel, ZoneCaption, margin_wrap
 
 CELL = 24
 GAP = 4
@@ -58,6 +63,9 @@ LANE_ROWS = 5  # max simultaneous lanes (HEX/DEC/BIN, or HEX/VAL/SGN/EXP/MAN)
 TOP_MARGIN = 8  # above the first row, so tall hex-digit labels don't clip the widget edge
 GRID_INSET = 12  # left/right inset of the cell rows; matches the 12px margin_wrap gutter
 BOTTOM_MARGIN = 4
+# BIN lane: nibbles per row, widest first. A row is "0b" + n groups of four
+# digits with single spaces between; the lane picks the widest that fits.
+BIN_ROW_NIBBLES = (16, 8, 4, 2)
 
 
 @dataclass(frozen=True)
@@ -502,6 +510,8 @@ class BitGrid(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if not self.enabled_look or self.bands is not None:  # packed layout: read-only
             return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return  # a right or middle click is not an edit
         self._press_bit = self._bit_at(event.position())
         self._dragging = False
         if self._press_bit is None:
@@ -536,7 +546,8 @@ class BitGrid(QWidget):
             self.setToolTip(f"bit {bit} = {state}    {name}[{msb}:{lsb}]")
         else:
             self.setToolTip(
-                f"bit {bit} = {state}    2^{bit} = {1 << bit}    byte {bit // 8}, nibble {bit // 4}"
+                f"bit {bit} = {state}    {power_of_two(bit)} = {1 << bit}"
+                f"    byte {bit // 8}, nibble {bit // 4}"
             )
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -577,6 +588,7 @@ class IntegerView(QWidget):
 
         self.rows: dict[str, tuple[QLabel, QLabel]] = {}
         self._copy_texts: dict[str, str] = {}
+        self._bin_nibbles = BIN_ROW_NIBBLES[0]  # nibbles per BIN row at the current width
         self._row_keys: list[str | None] = [None] * LANE_ROWS
         self._row_widgets: list[tuple[QLabel, QLabel, QPushButton]] = []
         self.readout_caption = ZoneCaption("READOUT")
@@ -597,7 +609,7 @@ class IntegerView(QWidget):
         for i in range(LANE_ROWS):
             name = QLabel("")
             name.setProperty("class", "laneName")
-            value = QLabel("")
+            value = ShrinkToFitLabel("")  # never wider than the panel: see the class
             value.setProperty("class", "laneValue")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # selectable text implies ClickFocus
@@ -672,6 +684,11 @@ class IntegerView(QWidget):
         self.csr = csr
         if value is None:  # nothing editable left for the cursor to sit on
             self.stop_cursor()
+        elif self.grid_widget.cursor_bit is not None:
+            # A narrower word: bring the cursor back onto a cell that exists,
+            # or Space would toggle a bit the grid no longer shows.
+            self._set_cursor(self.grid_widget.cursor_bit)
+            self._cursor_anchor = None
         was_active = self.active
         self.active = value is not None
         if value is not None:
@@ -830,15 +847,7 @@ class IntegerView(QWidget):
             "BIN": views.binary,
         }
         placeholder = "—"
-        # Set bits rendered in the same phosphor/trace color as the bit grid's
-        # asserted cells, so the two views read as one instrument, not two.
-        # Displayed with space-separated nibble groups (copy keeps the
-        # canonical "_" grouping) so QLabel can wrap the line at 64-bit
-        # word sizes instead of overflowing the panel.
-        bin_display = views.binary.replace("_", " ")
-        bin_text = bin_display.replace(
-            "1", f'<span style="color:{self.palette_tokens.bit_on}">1</span>'
-        )
+        bin_text = self._bin_markup(views.binary)
         lanes = [
             ("HEX", views.hex if self.active else placeholder),
             ("DEC", dec_text if self.active else placeholder),
@@ -857,6 +866,41 @@ class IntegerView(QWidget):
         )
         self._update_slice_label()
         self._refresh_field_table()
+
+    def _bin_markup(self, binary: str) -> str:
+        """The BIN lane: equal rows of nibbles, lit digits in the trace colour.
+
+        Set bits use the same phosphor colour as the grid's asserted cells, so
+        the two views read as one instrument. Groups are space-separated (copy
+        keeps the canonical ``_``) and broken into rows of `_bin_nibbles` —
+        explicit breaks, because a label left to wrap by itself stops wherever
+        it runs out: 6, 7 and 3 nibbles for a 64-bit word at the minimum width.
+        Continuation rows are indented under the digits, past the ``0b``.
+        """
+        groups = binary.removeprefix("0b").split("_")
+        per_row = self._bin_nibbles
+        rows = [" ".join(groups[i : i + per_row]) for i in range(0, len(groups), per_row)]
+        lit = f'<span style="color:{self.palette_tokens.bit_on}">1</span>'
+        marked = [row.replace("1", lit) for row in rows]
+        return "0b" + "<br>&nbsp;&nbsp;".join(marked)
+
+    def _fitting_bin_nibbles(self) -> int:
+        """Widest BIN row (in nibbles) the lane's value column can show."""
+        label = self._row_widgets[0][1]
+        metrics = QFontMetrics(label.font())
+        available = label.width()
+        for nibbles in BIN_ROW_NIBBLES:
+            if metrics.horizontalAdvance("0b" + " ".join(["0000"] * nibbles)) <= available:
+                return nibbles
+        return BIN_ROW_NIBBLES[-1]
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        fitting = self._fitting_bin_nibbles()
+        if fitting != self._bin_nibbles:
+            self._bin_nibbles = fitting
+            if "BIN" in self.rows:
+                self._refresh()  # re-break the rows for the new width
 
     def _set_trunc_note(self, truncated: bool, value_bits: int) -> None:
         self.trunc_note.setVisible(truncated)
@@ -1018,7 +1062,8 @@ class IntegerView(QWidget):
             return
         hi, lo, value, width = sliced
         hex_text = format_int_base(value, "hex", width)
-        self.slice_label.setText(f"[{hi}:{lo}] = {hex_text} = {value} ({width} bits)")
+        unit = "bit" if width == 1 else "bits"
+        self.slice_label.setText(f"[{hi}:{lo}] = {hex_text} = {value} ({width} {unit})")
         self.slice_label.show()
 
     def set_palette(self, palette: Palette) -> None:

@@ -176,3 +176,48 @@ def test_load_state_json_skips_reserved_names() -> None:
     restored = Session()
     restored.load_state_json(blob)
     assert "pi" not in restored.variables
+
+
+# -- values wider than Python's int->str cap ------------------------------------------
+#
+# The evaluator allows ~300000-digit integers; json.dumps of a raw int stops at
+# 4300 digits with ValueError. One `x = 2**20000` then broke every later save.
+
+
+@pytest.mark.parametrize(
+    "number",
+    [2**20000, -(2**20000), 2**999999, 10**4300],
+    ids=["2**20000", "-2**20000", "2**999999", "10**4300"],  # pytest cannot print them either
+)
+def test_value_past_the_digit_cap_survives_real_json(number: int) -> None:
+    text = json.dumps(value_to_json(Value(number)))
+    assert value_from_json(json.loads(text)).number == number
+
+
+def test_ordinary_ints_keep_the_plain_json_shape() -> None:
+    # Files written by earlier versions hold this shape, and must keep loading.
+    assert value_to_json(Value(255))["number"] == {"kind": "int", "value": 255}
+    assert value_to_json(Value(-(2**64)))["number"] == {"kind": "int", "value": -(2**64)}
+    assert value_from_json(
+        {"number": {"kind": "int", "value": 7}, "declared_width": None,
+         "prefer_si": False, "note": None, "csr": None}
+    ).number == 7
+
+
+def test_session_state_with_a_huge_variable_roundtrips_through_json() -> None:
+    session = Session()
+    session.evaluate("x = 2**20000")
+    blob = json.dumps(session.state_to_json())
+    restored = Session()
+    restored.load_state_json(json.loads(blob))
+    assert restored.variables["x"].number == 2**20000
+    assert restored.ans is not None and restored.ans.number == 2**20000
+
+
+def test_malformed_hex_integer_is_rejected_not_crashed_on() -> None:
+    for bad in ("zz", "", 12, None, "0x"):
+        with pytest.raises((ValueError, TypeError, KeyError)):
+            value_from_json(
+                {"number": {"kind": "int", "hex": bad}, "declared_width": None,
+                 "prefer_si": False, "note": None, "csr": None}
+            )

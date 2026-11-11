@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.radix.calc.ResultPayload
@@ -99,7 +103,7 @@ fun InputLine(
             visualTransformation = errorUnderline(errorSpan, p.error),
             decorationBox = { inner ->
                 if (state.input.isEmpty()) {
-                    Text("0x…", color = p.hairline, fontFamily = MonoFont, fontSize = Dimens.inputText)
+                    Text("0x…", color = p.placeholder, fontFamily = MonoFont, fontSize = Dimens.inputText)
                 }
                 inner()
             },
@@ -109,6 +113,9 @@ fun InputLine(
         PreviewLine(result)
     }
 }
+
+/** Past this many characters the result gets the line to itself. */
+private const val ECHO_MAX_RESULT_CHARS = 12
 
 /** Underlines the offending span, as the desktop does, without moving the cursor. */
 private fun errorUnderline(span: List<Int>?, color: androidx.compose.ui.graphics.Color) =
@@ -131,7 +138,7 @@ private fun PreviewLine(result: ResultPayload?) {
     val lineHeight = with(LocalDensity.current) { (Dimens.resultText.value * 1.3f).sp.toDp() }
     Row(Modifier.fillMaxWidth().heightIn(min = lineHeight), verticalAlignment = Alignment.CenterVertically) {
         when {
-            result == null -> Text("ready", color = p.hairline, fontFamily = MonoFont, fontSize = Dimens.previewText)
+            result == null -> Text("ready", color = p.placeholder, fontFamily = MonoFont, fontSize = Dimens.previewText)
             result.isError && result.incomplete ->
                 Text("…", color = p.muted, fontFamily = MonoFont, fontSize = Dimens.previewText)
             result.isError ->
@@ -144,16 +151,33 @@ private fun PreviewLine(result: ResultPayload?) {
             result.kind == "empty" -> Unit
             else -> {
                 val badge = if (result.prefix.isNotEmpty()) "${result.prefix} ← " else "= "
-                Text(
-                    badge + result.text, color = p.accent, fontFamily = MonoFont,
-                    fontSize = Dimens.resultText, maxLines = 1, modifier = Modifier.alignByBaseline(),
+                // The echo sits beside a short result only: a long one needs the
+                // whole line, and a bare literal echoes as itself (`= 255  255`).
+                val echo = result.normalized.takeIf {
+                    it.isNotEmpty() && it != result.text && result.text.length <= ECHO_MAX_RESULT_CHARS
+                }
+                // One line, shrinking to fit: a 20-digit value at the full size
+                // used to wrap after the `=` and lose its digits under the card.
+                BasicText(
+                    text = badge + result.text,
+                    style = TextStyle(color = p.accent, fontFamily = MonoFont),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = Dimens.resultTextMin, maxFontSize = Dimens.resultText, stepSize = 1.sp,
+                    ),
+                    modifier = Modifier.weight(1f, fill = false).alignByBaseline(),
                 )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    result.normalized, color = p.muted, fontFamily = MonoFont,
-                    fontSize = Dimens.resultDetail, maxLines = 1,
-                    modifier = Modifier.weight(1f).alignByBaseline(),
-                )
+                if (echo != null) {
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        echo, color = p.muted, fontFamily = MonoFont,
+                        fontSize = Dimens.resultDetail, maxLines = 1, softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 150.dp).alignByBaseline(),
+                    )
+                }
             }
         }
     }

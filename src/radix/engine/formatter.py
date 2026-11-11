@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import mpmath
 
-from radix.engine.values import Number, Value, magnitude_fits
+from radix.engine.values import Number, Value, magnitude_fits, to_mpf
 
 DISPLAY_DIGITS = 12
 # Plain notation is used in auto mode when the decimal exponent is in this range.
@@ -66,7 +66,7 @@ class FloatViews:
     man_width: int  # 23 or 52
     hex: str  # nibble-grouped hex of the bit pattern
     sign_text: str  # "+" / "-"
-    exponent_text: str  # decoded, e.g. "1023 - bias 1023 = 2^0"
+    exponent_text: str  # decoded, e.g. "1023 - bias 1023 = 2⁰"
     mantissa_text: str  # decoded, e.g. "1.5703125"
 
 
@@ -114,13 +114,13 @@ def float_views(value: Number, word_size: int, decimal: str = ".") -> FloatViews
             exponent_text = "0 (zero)"
             mantissa_text = "0"
         else:
-            exponent_text = f"0 (subnormal, 2^{1 - bias})"
+            exponent_text = f"0 (subnormal, {power_of_two(1 - bias)})"
             mantissa_text = f"{man_bits / 2**man_width:.10g}"
     elif exp_bits == (1 << exp_width) - 1:
         exponent_text = f"{exp_bits} (all ones)"
         mantissa_text = "inf" if man_bits == 0 else "nan"
     else:
-        exponent_text = f"{exp_bits} - bias {bias} = 2^{exp_bits - bias}"
+        exponent_text = f"{exp_bits} - bias {bias} = {power_of_two(exp_bits - bias)}"
         mantissa_text = f"{1 + man_bits / 2**man_width:.10g}"
     return FloatViews(
         bits=bits,
@@ -132,6 +132,24 @@ def float_views(value: Number, word_size: int, decimal: str = ".") -> FloatViews
         exponent_text=exponent_text,
         mantissa_text=mantissa_text.replace(".", decimal),
     )
+
+
+_SUPERSCRIPTS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+def superscript(n: int) -> str:
+    """``n`` in superscript digits: 10 → ¹⁰, -15 → ⁻¹⁵."""
+    return str(n).translate(_SUPERSCRIPTS)
+
+
+def power_of_two(exponent: int) -> str:
+    """Display text for 2 raised to ``exponent``: 2⁰, 2⁻¹⁵.
+
+    Never ``2^n``: in this calculator ``^`` is XOR, in every context, and a
+    readout that spells a power with it teaches the one mistake the grammar
+    exists to prevent.
+    """
+    return "2" + superscript(exponent)
 
 
 def format_number(value: Value, notation: Notation = "auto", decimal: str = ".") -> str:
@@ -155,8 +173,8 @@ def format_number(value: Value, notation: Notation = "auto", decimal: str = ".")
                 # the evaluator's result guard permits ints far wider than that
                 # cap. Such a result is still worth showing — just not
                 # digit-for-digit — so fall back to scientific notation.
-                return format_real(mpmath.mpf(n), "sci", decimal)
-        return format_real(mpmath.mpf(n), notation, decimal)
+                return format_real(to_mpf(n), "sci", decimal)
+        return format_real(to_mpf(n), notation, decimal)
     return format_real(n, notation, decimal)
 
 
@@ -195,12 +213,17 @@ def format_int_base(value: int, base: str, word_size: int) -> str:
     """Compact hex/bin rendering of an integer result (display base option).
 
     Non-negative values render at their natural width, nibble-grouped;
-    negative values render as word-size two's complement, matching the
-    integer panel.
+    negative values render as two's complement at the word size, matching the
+    integer panel — or, when the value does not fit the word, at the next
+    multiple of it that holds the value. Masking a too-wide negative to the
+    word printed `-2**40` as ``0x0`` with nothing to say bits were gone.
     """
     if base == "dec":
         return str(value)
-    wrapped = value & ((1 << word_size) - 1) if value < 0 else value
+    width = word_size
+    if value < 0:
+        width = -(-bits_needed(value) // word_size) * word_size
+    wrapped = value & ((1 << width) - 1) if value < 0 else value
     if base == "hex":
         return group_digits(f"{wrapped:X}", 4, min_width=1, prefix="0x")
     if base == "bin":
@@ -284,5 +307,5 @@ def _eng(digits: str, exponent: int, negative: bool, si: bool, decimal: str = ".
 def format_si(x: Number, decimal: str = ".") -> str:
     """Engineering + SI-suffix rendering used by period()/freq() style output."""
     if isinstance(x, int):
-        x = mpmath.mpf(x)
+        x = to_mpf(x)
     return format_real(x, "eng_si", decimal)

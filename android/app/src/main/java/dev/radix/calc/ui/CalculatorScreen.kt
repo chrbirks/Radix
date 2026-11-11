@@ -112,7 +112,8 @@ fun CalculatorScreen(vm: CalculatorViewModel) {
             FnStrip(
                 state.suggestions,
                 onOpenSheet = { vm.openSheet(Sheet.FN) },
-                onInsert = vm::insertFunction,
+                // A chip that completes a typed prefix replaces it.
+                onInsert = { vm.insertFunction(it.insert, it.replace) },
                 onInsertText = vm::insert,
             )
             if (!imeVisible) {
@@ -132,7 +133,7 @@ fun CalculatorScreen(vm: CalculatorViewModel) {
         sheet = state.sheet,
         functions = state.functions,
         onInsert = vm::insert,
-        onInsertFunction = vm::insertFunction,
+        onInsertFunction = { vm.insertFunction(it) },
         onClose = vm::closeSheet,
     )
 }

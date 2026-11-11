@@ -74,7 +74,7 @@ def test_float_result_shows_ieee754_view(qtbot, window: MainWindow) -> None:  # 
     assert window.intview.float_mode is not None
     assert window.intview.rows["HEX"][1].text() == "0x4020_0000"  # float32: default word size
     assert window.intview.rows["EXP"][0].text() == "EXP"
-    assert window.intview.rows["EXP"][1].text() == "128 - bias 127 = 2^1"
+    assert window.intview.rows["EXP"][1].text() == "128 - bias 127 = 2¹"
     assert "SGN" in window.intview.rows
     # 8/16-bit words have no float format: panel greys as before.
     window.session.word_size = 8
@@ -93,7 +93,7 @@ def test_float_result_shows_float64_at_64bit_word_size(qtbot, window: MainWindow
     _submit(qtbot, window, "2.5")
     assert window.intview.float_mode is not None
     assert window.intview.rows["HEX"][1].text() == "0x4004_0000_0000_0000"
-    assert window.intview.rows["EXP"][1].text() == "1024 - bias 1023 = 2^1"
+    assert window.intview.rows["EXP"][1].text() == "1024 - bias 1023 = 2¹"
     assert window.intview.grid_widget.bands is not None
     assert window.intview.grid_widget.bands.low_width == 52
 
@@ -507,7 +507,7 @@ def test_float32_renders_in_the_register_frame(qtbot, window: MainWindow) -> Non
     assert not intview.active  # a packed pattern is read-only, like the FLOAT ON view
     assert intview.rows["HEX"][1].text() == "0x3FC0_0000"
     assert intview.rows["VAL"][1].text() == "1.5"
-    assert intview.rows["EXP"][1].text() == "127 - bias 127 = 2^0"
+    assert intview.rows["EXP"][1].text() == "127 - bias 127 = 2⁰"
     assert intview.register_caption.text() == "REGISTER · float32"
     grid = intview.grid_widget
     assert grid.word_size == 32 and grid.bands is not None and grid.bands.low_width == 23
@@ -552,9 +552,9 @@ def test_fixed_bit_hover_tooltip(qtbot, window: MainWindow) -> None:  # type: ig
     _submit(qtbot, window, "fix(0.7071, 1, 15)")
     grid = window.intview.grid_widget
     _move(grid, grid._cell_rect(15).center())  # MSB: the two's-complement sign
-    assert "sign" in grid.toolTip() and "weight -2^0" in grid.toolTip()
+    assert "sign" in grid.toolTip() and "weight -2⁰" in grid.toolTip()
     _move(grid, grid._cell_rect(0).center())
-    assert "fraction" in grid.toolTip() and "weight 2^-15" in grid.toolTip()
+    assert "fraction" in grid.toolTip() and "weight 2⁻¹⁵" in grid.toolTip()
     # Moving off the cells clears the tooltip.
     _move(grid, QPointF(1, 1))
     assert grid.toolTip() == ""

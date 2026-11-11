@@ -12,6 +12,7 @@ that mode accepts when typed back in.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from html import escape
 
 from radix import __version__
@@ -49,10 +50,12 @@ _COMMAND_HELP: dict[str, str] = {
     ),
 }
 
+_INTRO = "Type an expression and press Enter. Everything is keyboard-first — no buttons."
+
 _BASICS = f"""\
 Radix v{__version__}
 
-Type an expression and press Enter. Everything is keyboard-first — no buttons.
+{{intro}}
 
 Literals   123   1.5   1.5e-9   0xFF   0b1010   0o17   0xFFFF_0000
            Prefixed: hFF = xFF = 0xFF   b1010 = 0b1010
@@ -68,6 +71,14 @@ Commands   help        this overview            help <name>   one operator/funct
            clear       clear history (variables & csrs kept)
            csr NAME = FIELD[msb:lsb] ...      define a CSR field layout
 """
+
+
+# Where the label column of `_BASICS` ends ("Literals   ", "Commands   ");
+# continuation lines are indented to it.
+_BASICS_LABEL_WIDTH = 11
+
+# (section title, ((keys, what they do), ...)) — a front end's own shortcuts.
+ShortcutSections = Sequence[tuple[str, Sequence[tuple[str, str]]]]
 
 
 # A decimal literal in period syntax: digits, point, digits, not glued to a
@@ -111,12 +122,21 @@ def localize(text: str, syntax: NumSyntax) -> str:
     return "".join(out)
 
 
+def _basics(syntax: NumSyntax, intro: str | None) -> str:
+    """The opening block. ``intro`` replaces the one line that describes how the
+    front end is driven — the phone has keys, so the desktop's does not fit it."""
+    return localize(_BASICS, syntax).replace("{intro}", intro or _INTRO)
+
+
 def general_help(
-    shortcuts: str | None = None, arg_sep: str = ", ", syntax: NumSyntax | None = None
+    shortcuts: str | None = None,
+    arg_sep: str = ", ",
+    syntax: NumSyntax | None = None,
+    intro: str | None = None,
 ) -> str:
     syntax = _syntax_for(arg_sep, syntax)
     arg_sep = syntax.arg_sep + " "
-    lines = [localize(_BASICS, syntax)]
+    lines = [_basics(syntax, intro)]
     lines.append("Operators (lowest to highest precedence)")
     for op, summary, example in _OPERATOR_HELP:
         lines.append(f"  {op:4} {summary}  e.g. {localize(example, syntax)}")
@@ -138,21 +158,40 @@ def general_help(
 
 
 def general_help_html(
-    shortcuts: str | None = None, arg_sep: str = ", ", syntax: NumSyntax | None = None
+    shortcuts: str | ShortcutSections | None = None,
+    arg_sep: str = ", ",
+    syntax: NumSyntax | None = None,
 ) -> str:
-    """Rich-text variant of general_help() for the GUI pane (same sources)."""
+    """Rich-text variant of general_help() for the GUI pane (same sources).
+
+    Everything is a table whose right-hand cell wraps, so the pane never needs
+    sideways scrolling: the opening block and the shortcut list used to be
+    ``<pre>``, which at the default window width hid a third of each line with
+    no keyboard way to reach it. ``shortcuts`` as sections renders the same
+    way; a plain string is still accepted and shown preformatted.
+    """
     syntax = _syntax_for(arg_sep, syntax)
     arg_sep = syntax.arg_sep + " "
 
-    def table(rows: list[tuple[str, str]]) -> str:
+    def table(rows: Sequence[tuple[str, str]], keep_spacing: bool = False) -> str:
+        # pre-wrap: runs of spaces inside a cell are layout (`123   1.5   0xFF`)
+        # and must survive, but the cell may still break at them.
+        right_style = ' style="white-space:pre-wrap"' if keep_spacing else ""
         cells = "".join(
             f'<tr><td style="white-space:pre">{escape(left)}&nbsp;&nbsp;&nbsp;</td>'
-            f"<td>{escape(right)}</td></tr>"
+            f"<td{right_style}>{escape(right)}</td></tr>"
             for left, right in rows
         )
         return f'<table cellspacing="0" cellpadding="1">{cells}</table>'
 
-    parts = [f"<pre>{escape(localize(_BASICS, syntax))}</pre>"]
+    title, _blank, intro, *body = _basics(syntax, None).splitlines()
+    basics = [
+        (line[:_BASICS_LABEL_WIDTH].strip(), line[_BASICS_LABEL_WIDTH:])
+        for line in body
+        if line.strip()
+    ]
+    parts = [f"<p><b>{escape(title)}</b></p>", f"<p>{escape(intro)}</p>"]
+    parts.append(table(basics, keep_spacing=True))
     parts.append("<h3>Operators (lowest to highest precedence)</h3>")
     parts.append(
         table(
@@ -176,8 +215,13 @@ def general_help_html(
         )
     parts.append("<p>Constants: " + ", ".join(sorted(CONSTANTS)) + "</p>")
     parts.append('<p>Use help &lt;name&gt; for details, e.g. "help sin" or "help &lt;&lt;".</p>')
-    if shortcuts:
-        parts.append(f"<pre>{escape(shortcuts)}</pre>")
+    if isinstance(shortcuts, str):
+        if shortcuts:
+            parts.append(f"<pre>{escape(shortcuts)}</pre>")
+    elif shortcuts:
+        for heading, rows in shortcuts:
+            parts.append(f"<h3>{escape(heading)}</h3>")
+            parts.append(table(rows))
     return "\n".join(parts)
 
 
@@ -193,8 +237,9 @@ def topic_help(
     if spec is not None:
         lo, hi = spec.arity
         arity = str(lo) if lo == hi else f"{lo}–{hi}"
+        noun = "argument" if hi == 1 else "arguments"
         return (
-            f"{spec.signature_sep(arg_sep)} — {spec.summary}  ({arity} argument(s))"
+            f"{spec.signature_sep(arg_sep)} — {spec.summary}  ({arity} {noun})"
             f"\nExample: {localize(spec.example, syntax)}"
         )
     if topic in CONSTANTS:

@@ -17,8 +17,9 @@ from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QVBoxLayout, QWidget
 
-from radix.engine.values import Value
+from radix.engine.values import Value, int_from_json, int_to_json
 from radix.ui_qt.theme import Palette
+from radix.ui_qt.zones import ElidedLabel
 
 MAX_CHANNELS = 8
 MINI_STRIP_H = 12
@@ -125,7 +126,9 @@ class ChannelStrip(QWidget):
 
         self.slot_label = QLabel(channel.label)
         self.slot_label.setProperty("class", "chanSlot")
-        self.value_label = QLabel(channel.text)
+        # Elides rather than widening the rack: a 64-bit value in BIN base is
+        # 80 characters, and the rack's minimum width is the inspector's.
+        self.value_label = ElidedLabel(channel.text)
         self.value_label.setProperty("class", "chanValue")
         self.ref_tag = QLabel("REF")
         self.ref_tag.setProperty("class", "refTag")
@@ -137,7 +140,6 @@ class ChannelStrip(QWidget):
         self.diff_strip = MiniBitStrip(palette)
         self.diff_strip.set_color(palette.bit_changed)
         self.diff_strip.hide()
-        self._update_bitstrip()
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -152,6 +154,10 @@ class ChannelStrip(QWidget):
         layout.addLayout(top)
         layout.addWidget(self.bitstrip)
         layout.addWidget(self.diff_strip)
+        # Only now, with every child parented by the layout: setVisible(True)
+        # on a parentless widget makes it a top-level window, and this used to
+        # run first — one native window shown (then reparented) per pin.
+        self._update_bitstrip()
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
@@ -364,7 +370,13 @@ class ChannelsRack(QWidget):
         channels: list[dict[str, Any]] = []
         for c in self.channels:
             if c.value is not None and isinstance(c.value.number, int):
-                channels.append({"label": c.label, "kind": "int", "int": c.value.number})
+                # int_to_json: a pinned value past Python's int->str cap would
+                # otherwise make json.dumps of the whole rack raise on close.
+                stored = int_to_json(c.value.number)
+                key = "hex" if "hex" in stored else "int"
+                channels.append(
+                    {"label": c.label, "kind": "int", key: stored.get("hex", stored.get("value"))}
+                )
             else:
                 channels.append({"label": c.label, "kind": "text", "text": c.text})
         return {"ref": self.ref_index, "channels": channels}
@@ -382,7 +394,7 @@ class ChannelsRack(QWidget):
             try:
                 label = str(entry["label"])
                 if entry["kind"] == "int":
-                    raw = entry["int"]
+                    raw = int_from_json({"hex": entry["hex"]}) if "hex" in entry else entry["int"]
                     if not isinstance(raw, int) or isinstance(raw, bool):
                         continue
                     value = Value(raw)

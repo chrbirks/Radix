@@ -20,7 +20,9 @@ class MainActivity : ComponentActivity() {
             initializer {
                 // Variables, ans, modes and the MRU list; history has its own JSONL.
                 val stateFile = File(filesDir, "state.json")
-                val bridge = ChaquopyBridge(filesDir.path, stateFile.takeIf { it.exists() }?.readText())
+                val bridge = LazyBridge {
+                    ChaquopyBridge(filesDir.path, stateFile.takeIf { it.exists() }?.readText())
+                }
                 CalculatorViewModel(
                     client = RadixClient(bridge),
                     // One thread: the Python Session is never touched concurrently.

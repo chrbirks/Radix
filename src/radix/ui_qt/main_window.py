@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QAbstractSlider,
     QApplication,
     QFrame,
-    QLabel,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -35,13 +34,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from radix.engine.errors import CalcError, IncompleteError
+from radix.engine.errors import CalcError, EvalError, IncompleteError
+from radix.engine.formatter import bits_needed, group_digits
 from radix.engine.help import general_help_html
 from radix.engine.values import Value
 from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz, TimeViz
 from radix.history.store import HistoryStore, StoredEntry
 from radix.session import INT_BASES, NOTATIONS, WORD_SIZES, Session
-from radix.ui_qt.completer import Completer
+from radix.ui_qt.completer import Completer, completions
 from radix.ui_qt.highlight import ExprHighlighter
 from radix.ui_qt.history_model import (
     HistoryDelegate,
@@ -60,7 +60,7 @@ from radix.ui_qt.theme import (
     Palette,
     theme_mode_icon,
 )
-from radix.ui_qt.zones import ZoneCaption, margin_wrap
+from radix.ui_qt.zones import WrapAnywhereLabel, ZoneCaption, margin_wrap
 
 PREVIEW_DEBOUNCE_MS = 100
 INSPECTOR_MIN_H = 160  # scrolls below this rather than squeezing its contents
@@ -76,7 +76,7 @@ PREVIEW_PAD_H = 12  # matches the QLabel#preview QSS horizontal padding
 MODE_CHIPS: tuple[tuple[str, str, str], ...] = (
     ("angle", "Alt+D", "angle unit"),
     ("word", "Alt+W", "word size for bit ops"),
-    ("sign", "Alt+S", "signedness of >> and the SGN row"),
+    ("sign", "Alt+S", "signedness: >> is arithmetic when signed, logical when unsigned"),
     ("base", "Alt+Shift+B", "integer result base for history & preview"),
     ("notation", "Alt+N", "result notation"),
     ("float", "Alt+Shift+F", "IEEE-754 breakdown for real results"),
@@ -119,27 +119,52 @@ class InspectorScroll(QScrollArea):
             self.updateGeometry()
         return super().event(event)
 
-SHORTCUT_HELP = """Keyboard shortcuts
-  Enter        evaluate          Up / Down    recall history
-  Tab          insert completion Ctrl+Space   open completions
-  Ctrl+L       clear history     Ctrl+Shift+C copy last result
-  F1 or help   this help         Esc          dismiss help
-  Up/Down      scroll help/vars  PageUp/Down  page help/vars
-  Alt+W        cycle word size   Alt+S        toggle signed/unsigned
-  Alt+D        toggle deg/rad    Alt+N        cycle notation
-  Alt+Shift+B  result base       Alt+T        always on top
-  Alt+V        variables pane    del <name>   remove a variable
-  Alt+Shift+F  show/hide float view (READOUT/REGISTER)
-  Alt+P        pin last result as a channel
-  Alt+G        bit cursor in the register grid (arrows/shift+arrows/space)
-  Alt+I        show/hide inspector panel
-  Alt+M        cycle theme (auto/light/dark)
-  Alt+Shift+D  decimal separator (comma / period)
-
-  Line editing (input field)
-  Ctrl+B/F     move char back/fwd  Alt+B/F      move word back/fwd
-  Ctrl+E       end of line         Ctrl+W       delete word back
-  Ctrl+D/H     delete char fwd/back"""
+# One row per shortcut, so the help pane can lay them out as a table that
+# wraps (the old hand-aligned two-column block needed 886px of window).
+SHORTCUT_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Keyboard shortcuts",
+        (
+            ("Enter", "evaluate"),
+            ("Up / Down", "recall history; the line you were typing comes back"),
+            ("Tab", "insert the highlighted completion"),
+            ("Ctrl+Space", "open completions"),
+            ("PageUp / PageDown", "scroll the history, help or variables pane"),
+            ("Shift+PageUp / Shift+PageDown", "scroll the inspector panel"),
+            ("Up / Down", "scroll help or variables while one is showing"),
+            ("Ctrl+L", "clear the history view (saved history and variables stay)"),
+            ("Ctrl+Shift+C", "copy the last result"),
+            ("F1 or help", "this help; Esc dismisses"),
+            ("Alt+W", "cycle word size"),
+            ("Alt+S", "toggle signed / unsigned"),
+            ("Alt+D", "toggle deg / rad"),
+            ("Alt+N", "cycle notation"),
+            ("Alt+Shift+B", "result base (dec / hex / bin)"),
+            ("Alt+Shift+D", "decimal separator (comma / period)"),
+            ("Alt+Shift+F", "show / hide the float view (READOUT, REGISTER)"),
+            ("Alt+V", "variables pane; del <name> removes one"),
+            ("Alt+P", "pin the last result as a channel"),
+            ("Alt+G", "bit cursor: arrows move, Shift+arrows select, Space toggles"),
+            ("Alt+I", "show / hide the inspector panel"),
+            ("Alt+T", "always on top"),
+            ("Alt+M", "cycle theme (auto / light / dark)"),
+        ),
+    ),
+    (
+        "Line editing",
+        (
+            ("Ctrl+B / Ctrl+F", "move one character back / forward"),
+            ("Alt+B / Alt+F", "move one word back / forward"),
+            ("Ctrl+E", "end of line"),
+            ("Ctrl+W", "delete the word before the cursor"),
+            ("Ctrl+D / Ctrl+H", "delete the character after / before the cursor"),
+        ),
+    ),
+)
+SHORTCUT_HELP = "\n\n".join(
+    title + "\n" + "\n".join(f"  {keys:<30} {action}" for keys, action in rows)
+    for title, rows in SHORTCUT_SECTIONS
+)
 
 
 class MainWindow(QMainWindow):
@@ -158,6 +183,10 @@ class MainWindow(QMainWindow):
         self._help_overview_shown = False
         self._did_initial_show = False
         self._locked_value: Value | None = None  # the entry the inspector is locked on
+        self._recall_draft = ""  # what was on the line when Up first left it
+        self._panel_real: Value | None = None  # the real the panel shows, for the float view
+        self._preview_head = ""  # preview echo: gives way first when the line is short
+        self._preview_tail = " "  # ...so this, the result or message, stays whole
         self.theme_mode = "auto"  # "auto" | "light" | "dark"
         self.on_theme_mode_changed: Callable[[], None] | None = None
 
@@ -223,7 +252,7 @@ class MainWindow(QMainWindow):
         self.help_pane.setReadOnly(True)
         # Read-only still takes focus by default (for its own scrolling); a
         # Tab or a click into the text then swallowed everything typed. The
-        # input line scrolls it instead (_scroll_overlay_pane).
+        # input line scrolls it instead (_scroll_key).
         self.help_pane.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Wrap to the viewport. The bulk of the document is HTML tables, whose
         # columns stay aligned while the summary cell wraps — so wrapping costs
@@ -263,7 +292,8 @@ class MainWindow(QMainWindow):
 
         self.result_caption = ZoneCaption("RESULT")
         self.result_caption.set_palette(palette)
-        self.result_label = QLabel("—")
+        # Wraps a value wider than the window instead of cutting it at the edge.
+        self.result_label = WrapAnywhereLabel("—")
         self.result_label.setObjectName("resultValue")
         self.result_label.setProperty("dimmed", "true")
         self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -379,8 +409,46 @@ class MainWindow(QMainWindow):
                     )
                     self._on_ref_changed()
 
+        self._apply_session_to_widgets()
         self.intview.show_value(None, session.word_size, session.signed)
         self.input.setFocus()
+
+    def _apply_session_to_widgets(self) -> None:
+        """Bring the widgets in line with the session as it is *now*.
+
+        They are constructed from the session as passed in; load_session then
+        changes it. Nothing re-applied the difference, so a persisted period
+        mode still highlighted with the comma grammar, stored rows kept their
+        decimal text under a HEX chip, and the pin rack assumed a 64-bit word.
+        """
+        syntax = self.session.decimal_syntax
+        self.highlighter.set_syntax(syntax)
+        self.history_view.set_syntax(syntax)
+        self._reformat_history()
+        self._refresh_result_label()
+        self.channels.refresh(self.session.format_value, self.session.word_size)
+
+    # -- persistence -----------------------------------------------------------
+
+    def _try_save(self, what: str, action: Callable[[], object]) -> str | None:
+        """Run one persistence write; a failure becomes a message, not an abort.
+
+        These run in the middle of a UI action. An exception out of one used to
+        skip the rest of the slot — the input was never cleared and every later
+        Enter re-ran the same failure — with the traceback going to a console
+        the frozen build does not have.
+        """
+        if self.store is None:
+            return None
+        try:
+            action()
+        except (OSError, ValueError) as exc:
+            reason = getattr(exc, "strerror", None) or str(exc)
+            return f"{what} not saved: {reason}"
+        return None
+
+    def _save_state(self) -> str | None:
+        return self._try_save("variables", lambda: save_state(self.session))
 
     # -- construction helpers ---------------------------------------------------
 
@@ -507,55 +575,63 @@ class MainWindow(QMainWindow):
         if outcome.kind == "csr":
             self.input.clear()
             if outcome.target is not None:
-                self._toast(outcome.help_text or f"defined csr {outcome.target}")
+                failed = self._save_state()
+                self._toast(failed or outcome.help_text or f"defined csr {outcome.target}")
                 self._refresh_vars_pane()
-                if self.store is not None:
-                    save_state(self.session)
             else:
                 self._show_vars()
             return
         if outcome.kind == "clear":
             self.model.clear()
             self._refresh_result_label()
-            if self.store is not None:
-                self.store.clear()
+            store = self.store
+            failed = (
+                self._try_save("history", store.clear) if store is not None else None
+            ) or self._save_state()
             self.input.clear()
-            self._toast("history cleared (variables & csrs kept)")
+            self._toast(failed or "history cleared (variables & csrs kept)")
+            self._panel_real = None
             self.intview.show_value(None, self.session.word_size, self.session.signed)
             self.inspector.show_viz_payload(None)
             self._refresh_vars_pane()
-            if self.store is not None:
-                save_state(self.session)
             return
         if outcome.value is None:
             return
         primary = self.session.format_value(outcome.value)
         prefix = f"{outcome.target} ← " if outcome.kind == "assign" else ""
         display = prefix + primary
-        self.model.append(
-            HistoryEntry(
-                text.strip(),
-                display,
-                outcome.value.note or "",
-                value=outcome.value,
-                prefix=prefix,
-                timestamp=time.time(),
-            )
+        entry = HistoryEntry(
+            text.strip(),
+            display,
+            outcome.value.note or "",
+            value=outcome.value,
+            prefix=prefix,
+            timestamp=time.time(),  # shared with the stored line: delete matches on it
         )
+        self.model.append(entry)
         self._refresh_result_label()
-        if self.store is not None:
-            self.store.append(
-                text.strip(),
-                display,
-                outcome.value.note or "",
-                prefix=prefix,
-                value=outcome.value,
-            )
-            save_state(self.session)
+        store = self.store
+        failed = None
+        if store is not None:
+            failed = self._try_save(
+                "history",
+                lambda: store.append(
+                    entry.expression,
+                    entry.result,
+                    entry.note,
+                    prefix=entry.prefix,
+                    value=entry.value,
+                    timestamp=entry.timestamp,
+                ),
+            ) or self._save_state()
         self.history_view.scrollToBottom()
         self.recall_index = None
+        self._recall_draft = ""
         self.input.clear()
-        self._set_preview(" ", "ok")
+        if failed:
+            self._toast(failed)
+        else:
+            self._set_preview(" ", "ok")
         self._panel_follow(outcome.value)
         if outcome.kind == "assign":
             self._refresh_vars_pane()
@@ -584,6 +660,12 @@ class MainWindow(QMainWindow):
             self._set_preview("…", "ok")
             return  # keep the panel steady while typing continues
         except CalcError as exc:
+            if self._is_partial_name(text, exc):
+                # `cl` on the way to `clog2(`: a name still being typed, which
+                # the completer is offering right now, is not an error yet.
+                self.highlighter.set_error_span(None)
+                self._set_preview("…", "ok")
+                return
             self._show_error(exc)
             return
         self.highlighter.set_error_span(None)
@@ -612,8 +694,26 @@ class MainWindow(QMainWindow):
         if outcome.kind == "assign":
             self._set_preview(outcome.normalized, "ok")
         else:
-            self._set_preview(f"{outcome.normalized} = {result}", "ok")
+            # A bare literal echoes as itself (`255 = 255`): show the result once.
+            echo = "" if outcome.normalized == result else outcome.normalized
+            self._set_preview(f"= {result}", "ok", head=echo)
         self._panel_follow(outcome.value)
+
+    def _is_partial_name(self, text: str, exc: CalcError) -> bool:
+        """True if `exc` is only about an identifier still being typed.
+
+        That is: the offending span is a name, it is the last thing on the
+        line, and it is a proper prefix of something the completer would offer.
+        `zz` (completes to nothing) and `cl + 1` (already moved on) stay errors.
+        """
+        if not isinstance(exc, EvalError) or exc.span.end != len(text.rstrip()):
+            return False
+        name = text[exc.span.start : exc.span.end]
+        if not name.isidentifier():
+            return False
+        return any(
+            c.name != name and c.name.startswith(name) for c in completions(self.session)
+        )
 
     def _panel_follow(self, value: Value | None) -> None:
         """Point the integer panel at a previewed/committed value.
@@ -625,6 +725,7 @@ class MainWindow(QMainWindow):
         (word size 32/64) or grey the panel (8/16).
         """
         viz = value.viz if value is not None else None
+        self._panel_real = None
         # TRACE is now only the card-shaped payloads; bit layouts live in REGISTER.
         self.inspector.show_viz_payload(
             viz if isinstance(viz, (ClockViz, MemViz, TimeViz)) else None
@@ -647,6 +748,7 @@ class MainWindow(QMainWindow):
                 number, self.session.word_size, self.session.signed, csr=value.csr
             )
             return
+        self._panel_real = value  # None, or the real this branch is showing
         float_views = (
             self.session.float_views_for(value)
             if value is not None and self.session.show_float_view
@@ -660,10 +762,16 @@ class MainWindow(QMainWindow):
         """Re-feed the live value so the armed channel can redraw its XOR diff."""
         self.channels.set_live(self.intview.scratch if self.intview.active else None)
 
-    def _set_preview(self, text: str, state: str) -> None:
-        """Write the line under the input. `state` is "ok" | "error" | "toast"."""
+    def _set_preview(self, text: str, state: str, head: str = "") -> None:
+        """Write the line under the input. `state` is "ok" | "error" | "toast".
+
+        `head` is an optional lead-in (the echoed expression) shown before
+        `text`; when the line is too narrow for both, it is `head` that elides.
+        """
         self._toast_active = state == "toast"  # a real preview supersedes a toast
-        self._preview_full = text
+        self._preview_head = head
+        self._preview_tail = text
+        self._preview_full = f"{head} {text}" if head else text
         self._render_preview()
         self.preview.setProperty("state", state)
         style = self.preview.style()
@@ -677,11 +785,21 @@ class MainWindow(QMainWindow):
         confirmations both outrun the line at narrow widths; without this they
         just stop at the edge with no sign anything is missing.
         """
-        metrics = self.preview.fontMetrics()
+        metrics = QFontMetrics(self.preview.font())
         available = self.preview.width() - 2 * PREVIEW_PAD_H
-        elided = metrics.elidedText(self._preview_full, Qt.TextElideMode.ElideRight, available)
-        self.preview.setText(elided)
-        self.preview.setToolTip(self._preview_full if elided != self._preview_full else "")
+        full, head, tail = self._preview_full, self._preview_head, self._preview_tail
+        if metrics.horizontalAdvance(full) <= available or not head:
+            shown = metrics.elidedText(full, Qt.TextElideMode.ElideRight, available)
+        else:
+            # Keep the answer. Eliding the whole line on the right kept the echo
+            # and dropped `= result` — the one part the line exists to show.
+            room = available - metrics.horizontalAdvance(" " + tail)
+            if room > metrics.horizontalAdvance("…"):
+                shown = metrics.elidedText(head, Qt.TextElideMode.ElideRight, room) + " " + tail
+            else:
+                shown = metrics.elidedText(tail, Qt.TextElideMode.ElideMiddle, available)
+        self.preview.setText(shown)
+        self.preview.setToolTip(full if shown != full else "")
 
     def _show_error(self, exc: CalcError) -> None:
         # The offending span gets a wavy underline in the input itself (a
@@ -743,8 +861,8 @@ class MainWindow(QMainWindow):
             assert isinstance(event, QKeyEvent)
             if self.completer.handle_key(event):
                 return True
-            if self._scroll_overlay_pane(event.key()):
-                return True  # help/vars showing: these scroll it, not history
+            if self._scroll_key(event):
+                return True  # a pane or the inspector took it as a scroll
             if self._handle_grid_cursor_key(event):
                 return True  # Alt+G cursor is up: arrows drive the bit grid
             if event.key() == Qt.Key.Key_Up:
@@ -772,6 +890,9 @@ class MainWindow(QMainWindow):
         if self.recall_index is None:
             if direction > 0:
                 return
+            # Leaving the live line: keep what was on it. Up used to throw a
+            # half-typed expression away with no way back.
+            self._recall_draft = self.input.text()
             self.recall_index = len(entries) - 1
         else:
             self.recall_index += direction
@@ -779,7 +900,8 @@ class MainWindow(QMainWindow):
             self.recall_index = 0
         if self.recall_index >= len(entries):
             self.recall_index = None
-            self.input.clear()
+            with self.completer.suppressed():
+                self.input.setText(self._recall_draft)
             return
         with self.completer.suppressed():  # recalled text must not pop completions
             self.input.setText(entries[self.recall_index].expression)
@@ -803,6 +925,13 @@ class MainWindow(QMainWindow):
             add("copy as hex", "copy_hex")
             add("copy as dec", "copy_dec")
             add("copy as bin", "copy_bin")
+            menu.addSeparator()
+            for label, action_id in (
+                ("copy as C literal", "copy_c"),
+                ("copy as Verilog literal", "copy_verilog"),
+                ("copy as VHDL literal", "copy_vhdl"),
+            ):
+                add(f"{label}   {self._source_literal(entry.value, action_id)}", action_id)
         if entry.value is not None:
             menu.addSeparator()
             add("pin value", "pin")
@@ -823,8 +952,18 @@ class MainWindow(QMainWindow):
         elif action == "copy_expression":
             clipboard.setText(entry.expression)
             self._toast("expression copied")
-        elif action in ("copy_hex", "copy_dec", "copy_bin") and entry.value is not None:
+        elif action == "copy_dec" and entry.value is not None:
+            # The digits, whatever the notation chip says: "copy as dec" in SCI
+            # mode used to copy `2.55e+2`.
+            text = self._plain_decimal(entry.value)
+            clipboard.setText(text)
+            self._toast(f"copied {text}")
+        elif action in ("copy_hex", "copy_bin") and entry.value is not None:
             text = self.session.format_value(entry.value, base=action.removeprefix("copy_"))
+            clipboard.setText(text)
+            self._toast(f"copied {text}")
+        elif action in ("copy_c", "copy_verilog", "copy_vhdl") and entry.value is not None:
+            text = self._source_literal(entry.value, action)
             clipboard.setText(text)
             self._toast(f"copied {text}")
         elif action == "recall":
@@ -832,28 +971,53 @@ class MainWindow(QMainWindow):
         elif action == "delete":
             self.model.remove(row)
             self._refresh_result_label()
-            self._persist_history()
-            self._toast("entry deleted")
+            store = self.store
+            failed = None
+            if store is not None:
+                stored = StoredEntry(
+                    entry.expression,
+                    entry.result,
+                    entry.note,
+                    entry.timestamp,
+                    value=entry.value,
+                    prefix=entry.prefix,
+                )
+                # That one line: the file also holds whatever Ctrl+L hid and
+                # whatever is older than the rows that were loaded.
+                failed = self._try_save("history", lambda: store.remove(stored))
+            self._toast(failed or "entry deleted")
         elif action == "pin" and entry.value is not None:
             label = entry.prefix.partition(" ←")[0] if entry.prefix else None
             self._pin_value(entry.value, label)
 
-    def _persist_history(self) -> None:
-        if self.store is None:
-            return
-        self.store.rewrite(
-            [
-                StoredEntry(
-                    e.expression,
-                    e.result,
-                    e.note,
-                    e.timestamp,
-                    value=e.value,
-                    prefix=e.prefix,
-                )
-                for e in self.model.entries
-            ]
-        )
+    def _plain_decimal(self, value: Value) -> str:
+        number = value.number
+        if isinstance(number, int):
+            try:
+                return str(number)
+            except ValueError:  # past Python's int->str cap: the display form will do
+                pass
+        return self.session.format_value(value, base="dec")
+
+    def _source_literal(self, value: Value, style: str) -> str:
+        """An integer as a literal for C, Verilog or VHDL source.
+
+        Sized to the value's declared width when it has one (`12'hABC`), else
+        to the word size — widened if the value does not fit — and two's
+        complement for a negative. The HEX lane's `0xDEAD_BEEF` is none of
+        these: C has no `_` separator, Verilog wants a width.
+        """
+        number = value.number
+        assert isinstance(number, int)
+        width = max(value.declared_width or self.session.word_size, bits_needed(number))
+        masked = number & ((1 << width) - 1)
+        digits = group_digits(f"{masked:X}", 4, min_width=-(-width // 4), prefix="")
+        if style == "copy_c":
+            return f"0x{masked:X}"
+        if style == "copy_verilog":
+            return f"{width}'h{digits}"
+        # VHDL: a bare x"..." is 4 bits per digit; other widths need VHDL-2008's count.
+        return f'x"{digits}"' if width % 4 == 0 else f'{width}x"{digits}"'
 
     def _recall_from_view(self, index: object) -> None:
         # Qt fires `clicked` before `doubleClicked` on the same press, so a
@@ -940,6 +1104,7 @@ class MainWindow(QMainWindow):
         # `3,14` colors as one number and `;` no longer trips a lex-error
         # underline. No-op unless the decimal mode actually changed.
         self.highlighter.set_syntax(self.session.decimal_syntax)
+        self.history_view.set_syntax(self.session.decimal_syntax)
         self._reformat_history()
         self._refresh_result_label()
         self.channels.refresh(self.session.format_value, self.session.word_size)
@@ -951,11 +1116,21 @@ class MainWindow(QMainWindow):
         # re-evaluate. The packed layouts have to be carried through: they are
         # function results, not display preferences, so a word-size cycle (or
         # Alt+F) must not drop the Qm.n / float32 view showing right now.
+        # The float view is itself a display setting (FLOAT ON/OFF, and its
+        # width follows the word size), so it is re-derived from the real it
+        # shows rather than carried: carrying it left a 32-bit view under a
+        # 64-bit chip, or any view under FLOAT OFF, whenever the input line
+        # was mid-expression and the preview below did not re-follow.
+        float_views = (
+            self.session.float_views_for(self._panel_real)
+            if self._panel_real is not None and self.session.show_float_view
+            else None
+        )
         self.intview.show_value(
             self.intview.scratch if self.intview.active else None,
             self.session.word_size,
             self.session.signed,
-            float_views=self.intview.float_mode,
+            float_views=float_views,
             fixed_view=self.intview.fixed_view,
             float_bits=self.intview.float_bits,
             csr=self.intview.csr,
@@ -1049,22 +1224,32 @@ class MainWindow(QMainWindow):
             self._pane_hid_inspector = False
         self.pane_stack.setCurrentWidget(pane)
 
-    def _scroll_overlay_pane(self, key: int) -> bool:
-        """Route scroll keys to help/vars, which never take focus themselves.
+    def _scroll_key(self, event: QKeyEvent) -> bool:
+        """Route scroll keys to the panes, none of which ever takes focus.
 
-        The input line keeps focus at all times, so without this the help pane
-        had no keyboard scrolling at all and Up/Down went to history recall —
-        useless while reading a document taller than the screen.
+        The input line keeps focus at all times, so every scrollable surface
+        has to be driven from here or it is mouse-only:
+
+        - PageUp/PageDown page whatever the top pane shows — history included,
+          which had no keyboard scrolling at all;
+        - Up/Down scroll help or variables while one is showing (over history
+          they stay history recall);
+        - Shift+PageUp/PageDown page the inspector, whose bit grid and pinned
+          rack fall below the fold at 64-bit word sizes or in a small window.
         """
-        pane = self.pane_stack.currentWidget()
-        if pane is self.history_view:
-            return False
-        actions: dict[int, QAbstractSlider.SliderAction] = {
-            Qt.Key.Key_Up: QAbstractSlider.SliderAction.SliderSingleStepSub,
-            Qt.Key.Key_Down: QAbstractSlider.SliderAction.SliderSingleStepAdd,
+        key = event.key()
+        paging: dict[int, QAbstractSlider.SliderAction] = {
             Qt.Key.Key_PageUp: QAbstractSlider.SliderAction.SliderPageStepSub,
             Qt.Key.Key_PageDown: QAbstractSlider.SliderAction.SliderPageStepAdd,
         }
+        if key in paging and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.inspector_scroll.verticalScrollBar().triggerAction(paging[key])
+            return True
+        pane = self.pane_stack.currentWidget()
+        actions = dict(paging)
+        if pane is not self.history_view:
+            actions[Qt.Key.Key_Up] = QAbstractSlider.SliderAction.SliderSingleStepSub
+            actions[Qt.Key.Key_Down] = QAbstractSlider.SliderAction.SliderSingleStepAdd
         action = actions.get(key)
         if action is None:
             return False
@@ -1119,7 +1304,7 @@ class MainWindow(QMainWindow):
         if text is None:
             self._style_help_pane(self.palette_tokens)
             arg_sep = self.session.decimal_syntax.arg_sep + " "
-            self.help_pane.setHtml(general_help_html(SHORTCUT_HELP, arg_sep))
+            self.help_pane.setHtml(general_help_html(SHORTCUT_SECTIONS, arg_sep))
         else:
             self.help_pane.setPlainText(text)
         self.help_pane.verticalScrollBar().setValue(0)  # always open at the top
@@ -1199,13 +1384,16 @@ class MainWindow(QMainWindow):
                 self.session.signed,
                 csr=None,
             )
-        if self.store is not None:
-            save_state(self.session)
+        failed = self._save_state()
+        if failed:
+            self._toast(failed)
 
     def _clear_history_view(self) -> None:
         self.model.clear()
         self._refresh_result_label()
-        self._toast("history view cleared (variables kept — type clear to wipe)")
+        # View only. (It used to add "type clear to wipe", but `clear` keeps
+        # variables too, and has since Radix 5.)
+        self._toast("history view cleared (saved history and variables are kept)")
 
     def _copy_result(self) -> None:
         text = self._last_result_text()

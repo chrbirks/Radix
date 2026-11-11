@@ -9,13 +9,15 @@ also persisted (alongside `prefix`, the assignment badge text) via
 a restart — reals round-trip bit-exact, same as session state does. Older
 files stored `value` as a bare int (int-valued entries only); those still load.
 Corrupt lines are skipped, never fatal; an unreadable, undecodable or
-missing file loads as empty. Writes (`append`/`rewrite`/`clear`) still raise
-OSError so the caller can report the failure instead of silently losing it.
+missing file loads as empty. Writes (`append`/`remove`/`rewrite`/`clear`) still
+raise OSError so the caller can report the failure instead of silently losing
+it. `remove` and `rewrite` replace the file atomically.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +48,20 @@ def _value_from_raw(raw_value: object) -> Value | None:
     if isinstance(raw_value, dict):
         return value_from_json(raw_value)
     raise ValueError(f"unrecognized value shape: {type(raw_value).__name__}")
+
+
+def _dump(entry: StoredEntry) -> str:
+    """One JSONL line for ``entry``."""
+    return json.dumps(
+        {
+            "expression": entry.expression,
+            "result": entry.result,
+            "note": entry.note,
+            "timestamp": entry.timestamp,
+            "value": value_to_json(entry.value) if entry.value is not None else None,
+            "prefix": entry.prefix,
+        }
+    )
 
 
 def default_path() -> Path:
@@ -90,33 +106,66 @@ class HistoryStore:
         note: str = "",
         value: Value | None = None,
         prefix: str = "",
-    ) -> None:
+        timestamp: float | None = None,
+    ) -> StoredEntry:
+        """Append one entry and return it exactly as stored.
+
+        The caller keeps the returned entry (its timestamp in particular):
+        that is what ``remove`` later matches against the file.
+        """
+        entry = StoredEntry(
+            expression,
+            result,
+            note,
+            time.time() if timestamp is None else timestamp,
+            value=value,
+            prefix=prefix,
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        record = {
-            "expression": expression,
-            "result": result,
-            "note": note,
-            "timestamp": time.time(),
-            "value": value_to_json(value) if value is not None else None,
-            "prefix": prefix,
-        }
         with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
+            fh.write(_dump(entry) + "\n")
+        return entry
+
+    def remove(self, entry: StoredEntry) -> None:
+        """Delete the one line holding ``entry``, leaving every other line as is.
+
+        Lines are matched by timestamp and expression and otherwise passed
+        through untouched — including ones this version cannot parse and the
+        ones older than the ``MAX_LOADED_ENTRIES`` a caller ever sees. Deleting
+        used to rewrite the file from the caller's list, which erased both.
+        """
+        try:
+            lines = self.path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return  # nothing stored, nothing to remove
+        for i in range(len(lines) - 1, -1, -1):  # newest first: duplicates are recent
+            try:
+                raw = json.loads(lines[i])
+                hit = (
+                    raw["expression"] == entry.expression
+                    and float(raw.get("timestamp", 0.0)) == entry.timestamp
+                )
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+            if hit:
+                del lines[i]
+                self._replace(lines)
+                return
 
     def rewrite(self, entries: list[StoredEntry]) -> None:
-        """Replace the file's contents (after deleting an entry from the UI)."""
+        """Replace the file's contents with exactly ``entries``."""
+        self._replace([_dump(entry) for entry in entries])
+
+    def _replace(self, lines: list[str]) -> None:
+        """Swap in new contents atomically: a crash mid-write keeps the old file."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as fh:
-            for entry in entries:
-                record = {
-                    "expression": entry.expression,
-                    "result": entry.result,
-                    "note": entry.note,
-                    "timestamp": entry.timestamp,
-                    "value": value_to_json(entry.value) if entry.value is not None else None,
-                    "prefix": entry.prefix,
-                }
-                fh.write(json.dumps(record) + "\n")
+        scratch = self.path.with_name(self.path.name + ".tmp")
+        try:
+            with scratch.open("w", encoding="utf-8") as fh:
+                fh.writelines(line + "\n" for line in lines)
+            os.replace(scratch, self.path)
+        finally:
+            scratch.unlink(missing_ok=True)
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)

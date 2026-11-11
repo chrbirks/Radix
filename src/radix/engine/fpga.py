@@ -8,19 +8,22 @@ preference, quantization-error note).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import struct
+import sys
 
 import mpmath
 
-from radix.engine.formatter import float_views, format_si, group_digits
+from radix.engine.formatter import float_views, format_si, group_digits, power_of_two
 from radix.engine.functions import (
+    FUNCTIONS,
     EvalContext,
     FunctionDomainError,
     Handler,
     _register,
 )
-from radix.engine.values import Number, Value
+from radix.engine.values import WORKING_DPS, WORKING_PREC, Number, Value, to_mpf
 from radix.engine.viz import ClockViz, FixedPointViz, FloatBitsViz, MemViz
 
 MAX_MASK_BITS = 1_000_000
@@ -29,6 +32,9 @@ MAX_MASK_BITS = 1_000_000
 # (and so every derived float) comfortably inside that, at a ceiling no real
 # device comes near.
 MAX_MEM_DIM = 1 << 64
+# clkdiv() draws and prints its divider; past this it is not a divider anyone
+# builds, and a 5000-digit one cannot even be printed.
+MAX_CLOCK_DIVIDER = 1 << 64
 
 
 def _int_arg(args: list[Number], i: int, what: str) -> int:
@@ -175,12 +181,15 @@ def _freq(args: list[Number], ctx: EvalContext) -> Value:
 
 def _clkdiv(args: list[Number], ctx: EvalContext) -> Value:
     """Nearest integer divider from a reference clock to a target rate."""
-    f_clk = mpmath.mpf(args[0])
-    f_target = mpmath.mpf(args[1])
+    f_clk = to_mpf(args[0])
+    f_target = to_mpf(args[1])
     if f_clk <= 0 or f_target <= 0:
         raise FunctionDomainError("clkdiv: frequencies must be positive")
     d = ctx.decimal
-    divisor = max(1, int(mpmath.nint(f_clk / f_target)))
+    ratio = f_clk / f_target
+    if ratio > MAX_CLOCK_DIVIDER:
+        raise FunctionDomainError("clkdiv: the divider would exceed 2**64")
+    divisor = max(1, int(mpmath.nint(ratio)))
     achieved = f_clk / divisor
     ppm = float((achieved - f_target) / f_target * 1_000_000)
     # Past 1%, percent reads better than ppm.
@@ -250,13 +259,32 @@ def _mem(args: list[Number], ctx: EvalContext) -> Value:
 
 # -- fixed-point Qm.n --------------------------------------------------------------
 
+MAX_Q_BITS = 128
+# Bits of the argument kept below the format's LSB, so the reported
+# quantization error is itself accurate. Formats up to WORKING_PREC minus this
+# are served at the working precision; wider ones raise it for the call.
+FIX_GUARD_BITS = 40
+
 
 def _q_format(args: list[Number], what: str) -> tuple[int, int, int]:
     m = _int_arg(args, 1, what)
     n = _int_arg(args, 2, what)
-    if m < 0 or n < 0 or m + n == 0 or m + n > 128:
-        raise FunctionDomainError(f"{what}: need 0 <= m, n and 0 < m+n <= 128")
+    if m < 0 or n < 0 or m + n == 0 or m + n > MAX_Q_BITS:
+        raise FunctionDomainError(f"{what}: need 0 <= m, n and 0 < m+n <= {MAX_Q_BITS}")
     return m, n, m + n
+
+
+def _fix_precision(args: list[Number]) -> int | None:
+    """Precision fix() needs its value argument at: the whole word plus guard bits.
+
+    None for anything that is not a valid format — the handler reports that.
+    """
+    m, n = args[1], args[2]
+    if not (isinstance(m, int) and isinstance(n, int)):
+        return None
+    if m < 0 or n < 0 or not 0 < m + n <= MAX_Q_BITS:
+        return None
+    return m + n + FIX_GUARD_BITS
 
 
 def _q_bit_weights(m: int, n: int) -> tuple[str, ...]:
@@ -265,11 +293,9 @@ def _q_bit_weights(m: int, n: int) -> tuple[str, ...]:
     weights = []
     for bit in range(total):
         if bit == total - 1:
-            weights.append(f"-2^{m - 1}")
-        elif bit >= n:
-            weights.append(f"2^{bit - n}")
+            weights.append(f"-{power_of_two(m - 1)}")
         else:
-            weights.append(f"2^-{n - bit}")
+            weights.append(power_of_two(bit - n))
     return tuple(weights)
 
 
@@ -281,12 +307,13 @@ def _fixed_viz(
     stored_text: str,
     error_text: str,
     error_lsb: float,
+    lsb_text: str,
     decimal: str = ".",
 ) -> FixedPointViz:
     """Build the payload, deriving every pre-formatted field the UI only draws.
 
-    ``exact_text``/``stored_text``/``error_text`` arrive as ``.``-decimal number
-    strings; they are localized here alongside the derived ``error_lsb_text``.
+    The text arguments arrive as ``.``-decimal number strings and are
+    localized here.
     """
     total = m + n
     signed = raw - (1 << total) if raw >> (total - 1) else raw
@@ -294,7 +321,6 @@ def _fixed_viz(
     def loc(s: str) -> str:
         return s if decimal == "." else s.replace(".", decimal)
 
-    lsb_text = "0 LSB" if error_lsb == 0 else loc(f"{error_lsb:.2f} LSB")
     return FixedPointViz(
         m=m,
         n=n,
@@ -306,47 +332,120 @@ def _fixed_viz(
         hex_text=group_digits(f"{raw:X}", 4, min_width=-(-total // 4), prefix="0x"),
         dec_text=str(raw),
         dec_signed_text=str(signed),
-        error_lsb_text=lsb_text,
+        error_lsb_text=loc(lsb_text),
         bit_weights=_q_bit_weights(m, n),
     )
 
 
+def _exact_parts(x: Number) -> tuple[int, int]:
+    """(numerator, exponent) with ``x == numerator * 2**exponent`` exactly."""
+    if isinstance(x, int):
+        return x, 0
+    sign, man, exp, _bc = x._mpf_
+    return (-int(man) if sign else int(man)), int(exp)
+
+
+def _round_scaled(numerator: int, shift: int) -> int:
+    """``numerator * 2**shift`` rounded to the nearest integer, ties to even."""
+    if shift >= 0:
+        return numerator << shift
+    drop = -shift
+    magnitude = abs(numerator)
+    if drop > magnitude.bit_length() + 1:
+        return 0  # under a quarter of an LSB: no need to build 2**drop
+    quotient, remainder = divmod(magnitude, 1 << drop)
+    half = 1 << (drop - 1)
+    if remainder > half or (remainder == half and quotient & 1):
+        quotient += 1
+    return -quotient if numerator < 0 else quotient
+
+
+def _q_range_text(m: int, n: int, ctx: EvalContext) -> str:
+    """The format's real-valued range, e.g. ``-1.0 to 0.999969482`` for Q1.15."""
+    total = m + n
+    with mpmath.workprec(total + 8):
+        lo = mpmath.ldexp(mpmath.mpf(-1), m - 1)
+        hi = -lo - mpmath.ldexp(mpmath.mpf(1), -n)
+        return _loc(f"{mpmath.nstr(lo, 9)} to {mpmath.nstr(hi, 9)}", ctx)
+
+
 def _fix(args: list[Number], ctx: EvalContext) -> Value:
-    """Real → Qm.n two's-complement raw value (round to nearest)."""
+    """Real → Qm.n two's-complement raw value (round to nearest, ties to even).
+
+    Exact in the bits: the argument is taken apart as numerator·2^exponent and
+    scaled with integer arithmetic, so nothing here rounds but the one
+    quantization step being asked for. The evaluator supplies the argument at
+    ``_fix_precision`` bits, which makes that hold for the whole word.
+    """
     m, n, total = _q_format(args, "fix")
-    x = mpmath.mpf(args[0])
-    scaled = int(mpmath.nint(x * (1 << n)))
+    x = args[0]
+    numerator, exponent = _exact_parts(x)
+    shift = exponent + n
     lo, hi = -(1 << (total - 1)), (1 << (total - 1)) - 1
-    if not lo <= scaled <= hi:
+    # Leading-bit position first, so a huge value is refused without scaling it.
+    fits = numerator.bit_length() + shift <= total + 1
+    scaled = _round_scaled(numerator, shift) if fits else 0
+    if not fits or not lo <= scaled <= hi:
+        shown = _loc(mpmath.nstr(to_mpf(x), 8), ctx)
         raise FunctionDomainError(
-            f"fix: {mpmath.nstr(x, 8)} does not fit Q{m}.{n} (range {lo}..{hi} raw)"
+            f"fix: {shown} does not fit Q{m}.{n} (range {_q_range_text(m, n, ctx)})"
         )
     raw = scaled & ((1 << total) - 1)
-    quantized = mpmath.mpf(scaled) / (1 << n)
-    err = x - quantized
-    # `Q{m}.{n}` is a format tag, not a number: localize only the error value.
-    note = f"Q{m}.{n}, quantization error = {_loc(mpmath.nstr(err, 3), ctx)}"
+    # What rounding dropped, still exact: err == residue * 2**exponent.
+    residue = numerator - (scaled << -shift) if shift < 0 else 0
+    with mpmath.workprec(max(mpmath.mp.prec, total + FIX_GUARD_BITS)):
+        exact_text = mpmath.nstr(to_mpf(x), 8)
+        stored_text = mpmath.nstr(mpmath.ldexp(mpmath.mpf(scaled), -n), 8)
+        err = mpmath.ldexp(to_mpf(residue), exponent)
+        err_lsb = float(mpmath.ldexp(to_mpf(abs(residue)), shift)) if residue else 0.0
+    # Bits of the word below what a stored real's working precision reaches.
+    beyond = scaled.bit_length() - WORKING_PREC if ctx.limited_input else None
+    if beyond is not None and beyond > -4:
+        bound_lsb = 2.0**beyond
+        if beyond >= 1:
+            limit = f"low {beyond} bit{'s' if beyond > 1 else ''} beyond"
+        else:
+            limit = "last bit at the limit of"
+        note = f"Q{m}.{n}, {limit} the input's {WORKING_DPS}-digit precision"
+        error_text = "≤ " + mpmath.nstr(mpmath.ldexp(mpmath.mpf(1), beyond - n), 3)
+        lsb_text = f"≤ {bound_lsb:.3g} LSB"
+        err_lsb = bound_lsb
+    else:
+        error_text = mpmath.nstr(err, 3) if residue else "0"
+        # `Q{m}.{n}` is a format tag, not a number: localize only the error value.
+        note = f"Q{m}.{n}, quantization error = {_loc(error_text, ctx)}"
+        if not residue:
+            lsb_text = "0 LSB"
+        else:
+            # A real error must never read as none: not when it rounds to 0.00
+            # LSB, and not when it underflows the float entirely (1e-5000).
+            err_lsb = err_lsb or sys.float_info.min
+            lsb_text = "<0.01 LSB" if err_lsb < 0.005 else f"{err_lsb:.2f} LSB"
     viz = _fixed_viz(
         m,
         n,
         raw,
-        exact_text=mpmath.nstr(x, 8),
-        stored_text=mpmath.nstr(quantized, 8),
-        error_text=mpmath.nstr(err, 3),
-        error_lsb=float(abs(err) * (1 << n)),
+        exact_text=exact_text,
+        stored_text=stored_text,
+        error_text=error_text,
+        error_lsb=err_lsb,
+        lsb_text=lsb_text,
         decimal=ctx.decimal,
     )
     return Value(raw, declared_width=total, note=note, viz=viz)
 
 
 def _unfix(args: list[Number], ctx: EvalContext) -> Value:
-    """Qm.n two's-complement raw value → real."""
+    """Qm.n two's-complement raw value → real, exactly."""
     raw = _int_arg(args, 0, "unfix")
     m, n, total = _q_format(args, "unfix")
     wrapped = raw & ((1 << total) - 1)
     signed = wrapped - (1 << total) if wrapped >> (total - 1) else wrapped
-    real = mpmath.mpf(signed) / (1 << n)
-    text = mpmath.nstr(real, 8)
+    # At the word's own width, so the real holds every bit and fix() of it
+    # returns the same word however wide the format is.
+    with mpmath.workprec(max(mpmath.mp.prec, total + 2)):
+        real = mpmath.ldexp(mpmath.mpf(signed), -n)
+        text = mpmath.nstr(real, 8)
     viz = _fixed_viz(
         m,
         n,
@@ -355,9 +454,15 @@ def _unfix(args: list[Number], ctx: EvalContext) -> Value:
         stored_text=text,  # decoding is exact: no quantization step
         error_text="0",
         error_lsb=0.0,
+        lsb_text="0 LSB",
         decimal=ctx.decimal,
     )
-    return Value(real, note=f"from Q{m}.{n}", viz=viz)
+    note = f"from Q{m}.{n}"
+    # A raw value is in range read either way: as the unsigned word or as the
+    # signed number it encodes. Anything else lost bits to the mask above.
+    if not -(1 << (total - 1)) <= raw < (1 << total):
+        note += f" (raw value wrapped to {total} bits)"
+    return Value(real, note=note, viz=viz)
 
 
 # -- IEEE-754 ----------------------------------------------------------------------
@@ -472,7 +577,7 @@ _TOOLKIT: list[tuple[str, tuple[int, int], str, str, str, str, Handler]] = [
      "RAM/ROM sizing: total bits, address width, capacity in bytes.",
      "mem(4096, 36) = 147456", _mem),
     ("fix", (3, 3), "value, m, n", _FIXED,
-     "Real → fixed-point Qm.n raw value (two's complement).",
+     "Real → fixed-point Qm.n raw value (two's complement; nearest, ties to even).",
      "fix(0.7071, 1, 15) = 0x5A82", _fix),
     ("unfix", (3, 3), "raw, m, n", _FIXED,
      "Fixed-point Qm.n raw value → real.", "unfix(0x5A82, 1, 15)", _unfix),
@@ -494,6 +599,9 @@ _TOOLKIT: list[tuple[str, tuple[int, int], str, str, str, str, Handler]] = [
 def register_fpga_functions() -> None:
     for name, arity, params, category, summary, example, handler in _TOOLKIT:
         _register(name, arity, params, category, summary, example, handler)
+    # fix() is the one function whose answer can be wider than the working
+    # precision: it tells the evaluator how many bits its value needs.
+    FUNCTIONS["fix"] = dataclasses.replace(FUNCTIONS["fix"], precision=_fix_precision)
 
 
 register_fpga_functions()

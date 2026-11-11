@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine_harness import run
+from engine_harness import run, run_number
 from radix.engine.errors import CalcError, EvalError, IncompleteError, LexError, ParseError
 from radix.session import Session
 
@@ -570,3 +570,72 @@ def test_decimal_point_needs_a_digit_after_it() -> None:
     assert run("1.5") == "1.5"
     assert run(".5") == "0.5"
     assert run("1.5e-9") == "1.5e-9"
+
+
+# -- a half-typed literal prefix is "still typing", not an error ----------------------
+
+
+@pytest.mark.parametrize(
+    "text", ["0x", "0b", "0o", "1 + 0x", "8'", "8'h", "8's", "8'sh", 'x"', 'x"F']
+)
+def test_unfinished_literal_prefix_is_incomplete(text: str) -> None:
+    # The phone has a dedicated `0x` key: pressing it used to paint a red
+    # "malformed base-16 literal" before the first digit could be typed.
+    with pytest.raises(IncompleteError):
+        run(text)
+
+
+@pytest.mark.parametrize("text", ["0x + 1", "0xG", "0b2", "8'h + 1", "8'hZZ", '0x"', "8'q"])
+def test_malformed_literal_is_still_a_hard_error(text: str) -> None:
+    with pytest.raises(CalcError) as exc:
+        run(text)
+    assert not isinstance(exc.value, IncompleteError), text
+
+
+# -- Verilog signed sized literals -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("8'sh80", -128),
+        ("8'sh7F", 127),
+        ("8'shFF", -1),
+        ("8'SHff", -1),
+        ("4'sd9", -7),  # 1001 as a 4-bit two's-complement value
+        ("12'sb1000_0000_0000", -2048),
+        ("8'sh80 + 1", -127),
+        ("-8'sh80", 128),
+    ],
+)
+def test_verilog_signed_literal_reads_as_twos_complement(text: str, want: int) -> None:
+    assert run_number(text) == want
+
+
+def test_verilog_signed_literal_keeps_its_declared_width() -> None:
+    outcome = Session().evaluate("8'sh80")
+    assert outcome.value is not None and outcome.value.declared_width == 8
+    with pytest.raises(LexError):
+        run("8'sh1FF")  # still must fit the declared width
+
+
+# -- error spans index the line as it was typed ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "bad"),
+    [
+        ("  1 +* 2", "*"),
+        ("\t 0xFF $", "$"),
+        ("   nope + 1", "nope"),
+        ("  x = 1 +* 2", "*"),
+        ("csr CT$L = EN[1]", "$"),
+        ("  csr CTRL = EN[1] $", "$"),
+        ("  del nothere", "nothere"),
+    ],
+)
+def test_error_span_points_at_the_offending_text_in_the_raw_line(text: str, bad: str) -> None:
+    with pytest.raises(CalcError) as exc:
+        Session().evaluate(text)
+    span = exc.value.span
+    assert text[span.start : span.end] == bad

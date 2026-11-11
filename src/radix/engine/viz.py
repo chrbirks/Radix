@@ -29,7 +29,7 @@ class FixedPointViz:
     dec_text: str  # raw word as unsigned decimal
     dec_signed_text: str  # raw word read as two's complement
     error_lsb_text: str  # pre-formatted, e.g. "0.24 LSB"
-    bit_weights: tuple[str, ...]  # LSB-first, len == m+n, e.g. "2^-15" / "-2^0"
+    bit_weights: tuple[str, ...]  # LSB-first, len == m+n, e.g. "2⁻¹⁵" / "-2⁰"
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ class FloatBitsViz:
     stored_text: str  # the value actually stored after rounding to the format
     rounded: bool  # True when storing changed the value (numeric compare)
     sign_text: str  # "+" / "-"
-    exponent_text: str  # decoded, e.g. "127 - bias 127 = 2^0"
+    exponent_text: str  # decoded, e.g. "127 - bias 127 = 2⁰"
     mantissa_text: str  # decoded, e.g. "1.5"
 
 

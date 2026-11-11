@@ -84,6 +84,9 @@ class Session:
     # shipped default) at the entry point — see radix.__main__.main.
     decimal_mode: str = "period"
     show_float_view: bool = False  # IEEE-754 breakdown in READOUT/REGISTER
+    # Replaces the one line of `help` that says how the front end is driven
+    # (None = the desktop's keyboard-first wording); the phone sets its own.
+    help_intro: str | None = None
     variables: dict[str, Value] = field(default_factory=dict)
     csrs: dict[str, Csr] = field(default_factory=dict)
     ans: Value | None = None
@@ -125,10 +128,30 @@ class Session:
     # -- evaluation ------------------------------------------------------------
 
     def evaluate(self, text: str, commit: bool = True) -> Outcome:
-        """Evaluate one input line. Raises CalcError subclasses on bad input."""
+        """Evaluate one input line. Raises CalcError subclasses on bad input.
+
+        Error spans index ``text`` as given: every front end underlines or
+        carets the raw line, so a span measured on the stripped copy would land
+        short by the leading whitespace.
+        """
         line = text.strip()
         if not line:
             return Outcome("empty")
+        offset = len(text) - len(text.lstrip())
+        try:
+            return self._evaluate_line(line, commit)
+        except CalcError as exc:
+            if offset:
+                raise type(exc)(exc.message, shift(exc.span, offset)) from exc
+            raise
+        except RecursionError:
+            # Depth is a property of the input's shape (600 nested parentheses,
+            # a 3000-term chain), so it is the caller's error, not a crash.
+            raise EvalError(
+                "expression is nested too deeply", Span(offset, offset + len(line))
+            ) from None
+
+    def _evaluate_line(self, line: str, commit: bool) -> Outcome:
         command = self._command(line, commit)
         if command is not None:
             return command
@@ -174,7 +197,9 @@ class Session:
                 if text is None:
                     text = f"no help for {rest!r} — try plain `help` for the overview"
             else:
-                text = help_mod.general_help(syntax=self.decimal_syntax)
+                text = help_mod.general_help(
+                    syntax=self.decimal_syntax, intro=self.help_intro
+                )
             # target carries the topic so the GUI can tell overview from topic.
             return Outcome("help", target=rest or None, help_text=text)
         if word == "clear" and not rest:
@@ -227,7 +252,10 @@ class Session:
             raise usage_error
         name_start = line.index(name_raw, len(word) + 1)
         name_span = Span(name_start, name_start + len(name))
-        toks = tokenize(name)
+        try:
+            toks = tokenize(name)
+        except CalcError as exc:  # e.g. `CT$L`: point at the `$`, in the line
+            raise type(exc)(exc.message, shift(exc.span, name_start)) from exc
         if not (len(toks) == 2 and toks[0].kind == "IDENT" and toks[1].kind == "EOF"):
             raise EvalError(f"{name!r} is not a valid csr name", name_span)
         if name in RESERVED_NAMES:

@@ -86,7 +86,7 @@ def test_float_views_double() -> None:
     assert views.bits == 0x3FF0000000000000
     assert views.hex == "0x3FF0_0000_0000_0000"
     assert views.sign_text == "+"
-    assert views.exponent_text == "1023 - bias 1023 = 2^0"
+    assert views.exponent_text == "1023 - bias 1023 = 2⁰"
     assert views.mantissa_text == "1"
 
 
@@ -97,7 +97,7 @@ def test_float_views_single_and_specials() -> None:
     assert views is not None
     assert views.bits == 0xC0200000
     assert views.sign_text == "-"
-    assert views.exponent_text == "128 - bias 127 = 2^1"
+    assert views.exponent_text == "128 - bias 127 = 2¹"
     assert views.mantissa_text == "1.25"
     zero = float_views(0.0, 32)
     assert zero is not None and zero.mantissa_text == "0"
@@ -248,3 +248,41 @@ def test_auto_never_fabricates_integer_digits() -> None:
     # 12 integer digits still fit, so these stay plain (rounded to 12 digits).
     assert format_real(mpmath.mpf("123456789012.5"), "auto") == "123456789012"
     assert format_real(mpmath.mpf("999999999999.4"), "auto") == "999999999999"
+
+
+def test_format_int_base_never_truncates_a_wide_negative() -> None:
+    # In range for the word: word-size two's complement, as before.
+    assert format_int_base(-(2**31), "hex", 32) == "0x8000_0000"
+    assert format_int_base(-128, "bin", 8) == "0b1000_0000"
+    # Too wide for the word: `-2**40` used to print as 0x0, and -5000000000 as
+    # 0xD5FA_0E00, with nothing in the text to say bits were dropped. Widen to
+    # the next multiple of the word instead.
+    assert format_int_base(-(2**40), "hex", 32) == "0xFFFF_FF00_0000_0000"
+    assert format_int_base(-5000000000, "hex", 32) == "0xFFFF_FFFE_D5FA_0E00"
+    assert format_int_base(-(2**31) - 1, "hex", 32) == "0xFFFF_FFFF_7FFF_FFFF"
+    assert format_int_base(-200, "bin", 8) == "0b1111_1111_0011_1000"
+
+
+@pytest.mark.parametrize(
+    ("setup", "text", "want"),
+    [
+        ("x = -2", "x**2", "(-2)²"),  # was `-2² = 4`: reads as -(2²)
+        ("x = -2", "2 - x", "2 - (-2)"),  # was `2 - -2`
+        ("x = -2", "3 * x", "3 × (-2)"),
+        ("x = -2", "2 ** x", "2**(-2)"),
+        ("x = -2", "x[3]", "(-2)[3]"),
+        ("x = -2", "x - 2", "-2 - 2"),  # leading operand: unary minus binds first anyway
+        ("x = -2", "x * 3", "-2 × 3"),
+        ("x = -2", "abs(x)", "abs(-2)"),
+        ("x = -3", "ans**2", "(-3)²"),
+        ("x = 1.5e-9", "x**2", "(1.5e-9)²"),  # was `1.5e-9²`
+        ("x = 2", "x**2", "2²"),
+        ("x = 2", "2 - x", "2 - 2"),
+    ],
+)
+def test_preview_groups_a_substituted_value_that_is_not_an_atom(
+    setup: str, text: str, want: str
+) -> None:
+    session = Session()
+    session.evaluate(setup)
+    assert session.preview(text).normalized == want

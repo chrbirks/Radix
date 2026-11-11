@@ -17,6 +17,7 @@ class FakeBridge : RadixBridge {
 
     private fun defaultFor(method: String, argsJson: String): String = when (method) {
         "preview", "evaluate" -> intPayload(text = "42")
+        "rerender" -> EMPTY  // nothing committed unless a test scripts it
         "history", "suggest", "functions", "delete_history", "clear_history" -> "[]"
         "modes", "set_mode" -> MODES
         "state_json" -> "\"{\\\"session\\\": {}}\""
@@ -30,6 +31,9 @@ class FakeBridge : RadixBridge {
     companion object {
         const val MODES =
             """{"word_size": 32, "signed": false, "angle": "rad", "notation": "auto", "int_base": "dec"}"""
+
+        const val EMPTY =
+            """{"kind": "empty", "text": "", "normalized": "", "note": "", "prefix": "", "nibbles": [], "modes": $MODES}"""
 
         fun intPayload(text: String, input: String? = null): String = """
             {"kind": "int", "text": "$text", "normalized": "$text", "note": "", "prefix": "",

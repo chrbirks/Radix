@@ -7,6 +7,7 @@ text that produced them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 from radix.engine.errors import Span
 from radix.engine.values import Number
@@ -21,6 +22,7 @@ class Node:
 class Literal(Node):
     value: Number
     declared_width: int | None = None  # HDL sized literal width (8 for 8'hFF)
+    exact: Fraction | None = None  # what `value` rounded, for a non-integer literal
 
 
 @dataclass(frozen=True)

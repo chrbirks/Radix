@@ -12,6 +12,19 @@ interface RadixBridge {
     fun call(method: String, argsJson: String): String
 }
 
+/**
+ * Builds the real bridge on first use. The ViewModel factory runs on the main
+ * thread, and building a [ChaquopyBridge] there imported the engine, read the
+ * state file and loaded the history before the first frame; every call already
+ * happens on the bridge dispatcher, so deferring construction moves that work
+ * there too.
+ */
+class LazyBridge(create: () -> RadixBridge) : RadixBridge {
+    private val delegate by lazy(create)
+
+    override fun call(method: String, argsJson: String): String = delegate.call(method, argsJson)
+}
+
 /** Talks to `radix.bridge.Bridge` through Chaquopy. Python must be started first. */
 class ChaquopyBridge(filesDir: String, stateJson: String?) : RadixBridge {
     private val module: PyObject = Python.getInstance().getModule("radix.bridge")

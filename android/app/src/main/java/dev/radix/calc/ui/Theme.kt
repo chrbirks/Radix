@@ -36,26 +36,29 @@ data class Palette(
     val synNumber: Color,
     val synFunction: Color,
     val synOperator: Color,
-)
+) {
+    /** Hint text in an empty field: legible, but clearly not content. */
+    val placeholder: Color get() = muted.copy(alpha = 0.7f)
+}
 
 val LightPalette = Palette(
     background = Color(0xFFF5F7F6), surface = Color(0xFFFFFFFF), surfaceSunken = Color(0xFFEDF1EF),
     text = Color(0xFF18211C), muted = Color(0xFF5B6B61), hairline = Color(0xFFD8DEDA),
     accent = Color(0xFF2563EB), accentText = Color(0xFFFFFFFF), error = Color(0xFFC4344F),
-    ok = Color(0xFF0078FF), warn = Color(0xFFB87D0F), chipBg = Color(0xFFEBEEEC),
-    chipBgActive = Color(0xFFDCE6FB), bitOn = Color(0xFF0078FF), bitOff = Color(0xFFE1E7E3),
-    bitChanged = Color(0xFFB87D0F), synNumber = Color(0xFF0078FF), synFunction = Color(0xFF7C5CBF),
-    synOperator = Color(0xFFB87D0F),
+    ok = Color(0xFF006AE6), warn = Color(0xFF946200), chipBg = Color(0xFFEBEEEC),
+    chipBgActive = Color(0xFFDCE6FB), bitOn = Color(0xFF006AE6), bitOff = Color(0xFFE1E7E3),
+    bitChanged = Color(0xFF946200), synNumber = Color(0xFF006AE6), synFunction = Color(0xFF7C5CBF),
+    synOperator = Color(0xFF946200),
 )
 
 val DarkPalette = Palette(
     background = Color(0xFF2C3E50), surface = Color(0xFF34495E), surfaceSunken = Color(0xFF1B2838),
     text = Color(0xFFECF0F1), muted = Color(0xFFA9B7C6), hairline = Color(0xFF435B72),
     accent = Color(0xFF3498DB), accentText = Color(0xFF1B2838), error = Color(0xFFFF6B6B),
-    ok = Color(0xFF0078FF), warn = Color(0xFFF39C12), chipBg = Color(0xFF34495E),
-    chipBgActive = Color(0xFF2E5978), bitOn = Color(0xFF0078FF), bitOff = Color(0xFF3B5068),
-    bitChanged = Color(0xFFF39C12), synNumber = Color(0xFF0078FF), synFunction = Color(0xFFBB86FC),
-    synOperator = Color(0xFFF39C12),
+    ok = Color(0xFF74BCFF), warn = Color(0xFFF5A623), chipBg = Color(0xFF34495E),
+    chipBgActive = Color(0xFF2E5978), bitOn = Color(0xFF74BCFF), bitOff = Color(0xFF3B5068),
+    bitChanged = Color(0xFFF5A623), synNumber = Color(0xFF74BCFF), synFunction = Color(0xFFBB86FC),
+    synOperator = Color(0xFFF5A623),
 )
 
 val LocalPalette = staticCompositionLocalOf { DarkPalette }
@@ -79,6 +82,7 @@ object Dimens {
     val inputText = 22.sp
     val previewText = 13.sp // errors, info, placeholder under the input
     val resultText = 28.sp // the committed/live value — the readout is the hero
+    val resultTextMin = 13.sp // ...shrinking this far to stay on one line, then eliding
     val resultDetail = 13.sp // normalized form beside the value
 }
 

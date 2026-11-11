@@ -153,3 +153,67 @@ def test_degree_mode_domain_error() -> None:
     # The deg/rad flag must not change inverse-trig domains.
     with pytest.raises(EvalError):
         run("asin(2)", angle_deg=True)
+
+
+# -- trig at its zeros and poles ----------------------------------------------
+#
+# pi is a 25-digit approximation, so sin(pi) computes to -1.9e-26 rather than
+# 0 — and in DEG mode sin(180) showed -7.05e-26. That is rounding residue of
+# the argument, not a result.
+
+DEG = {"angle_deg": True}
+
+TRIG_ZEROS = [
+    ("sin(pi)", {}, "0"),
+    ("sin(-pi)", {}, "0"),
+    ("sin(2*pi)", {}, "0"),
+    ("sin(100*pi)", {}, "0"),
+    ("cos(pi/2)", {}, "0"),
+    ("cos(3*pi/2)", {}, "0"),
+    ("tan(pi)", {}, "0"),
+    ("sin(180)", DEG, "0"),
+    ("sin(360)", DEG, "0"),
+    ("sin(-180)", DEG, "0"),
+    ("cos(90)", DEG, "0"),
+    ("cos(270)", DEG, "0"),
+    ("tan(180)", DEG, "0"),
+    # ...while a result that is small because its argument is small stays put.
+    ("sin(1e-30)", {}, "1e-30"),
+    ("tan(1e-30)", {}, "1e-30"),
+    ("sin(1e-30)", DEG, "1.74532925199e-32"),
+    ("sin(30)", DEG, "0.5"),
+    ("cos(60)", DEG, "0.5"),
+    ("cos(0)", {}, "1"),
+]
+
+
+@pytest.mark.parametrize(("text", "settings", "expected"), TRIG_ZEROS)
+def test_trig_zero_is_zero(text: str, settings: dict[str, object], expected: str) -> None:
+    assert run(text, **settings) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "settings"),
+    [
+        ("tan(90)", DEG),
+        ("tan(270)", DEG),
+        ("tan(-90)", DEG),
+        ("tan(pi/2)", {}),
+        ("tan(3*pi/2)", {}),
+    ],
+)
+def test_tan_at_a_pole_is_an_error_not_a_huge_number(
+    text: str, settings: dict[str, object]
+) -> None:
+    with pytest.raises(EvalError, match="tan"):
+        run(text, **settings)
+
+
+def test_tan_just_off_a_pole_is_still_a_number() -> None:
+    assert run("tan(89.999)", **DEG).startswith("57295.77")
+
+
+def test_round_summary_states_the_tie_rule() -> None:
+    from radix.engine.functions import FUNCTIONS
+
+    assert "ties to even" in FUNCTIONS["round"].summary

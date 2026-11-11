@@ -11,10 +11,17 @@ Semantics (the spec — see plan and tests):
   current word size — register-like wrap-on-overflow. ``>>`` is logical when
   unsigned, arithmetic when signed. Ordinary arithmetic is never masked.
 - Operand guards keep pathological input (``10**10**10``) an error, not a hang.
+  The same budget holds for every intermediate, not just ``**``: a product of
+  in-budget integers, or a real that ran away before ``//`` turned it into an
+  integer, is refused where it is produced.
+- A function may ask for its first argument at more than the working precision
+  (``FunctionSpec.precision``); that argument is then re-evaluated with literals
+  and constants re-derived at the raised precision.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 
 import mpmath
@@ -26,6 +33,7 @@ from radix.engine.functions import (
     FUNCTIONS,
     EvalContext,
     FunctionDomainError,
+    Handler,
 )
 from radix.engine.nodes import (
     Assign,
@@ -38,7 +46,14 @@ from radix.engine.nodes import (
     Slice,
     Unary,
 )
-from radix.engine.values import Number, Value, magnitude_fits
+from radix.engine.values import (
+    WORKING_PREC,
+    Number,
+    Value,
+    fraction_to_mpf,
+    magnitude_fits,
+    to_mpf,
+)
 
 # Guards against pathological input.
 MAX_POW_RESULT_BITS = 1_000_000
@@ -46,6 +61,23 @@ MAX_SHIFT_COUNT = 1_000_000
 MAX_MPF_EXPONENT = 10**8
 
 BIT_OPS = {"|", "^", "&", "<<", ">>"}
+
+# A stored real whose mantissa is this close to full was (almost certainly)
+# rounded at the working precision; a shorter one (0.5, 3·2⁻⁷) or a wider one
+# (unfix() of a 128-bit word) holds its value exactly.
+_ROUNDED_MANTISSA_SLACK = 12
+
+
+def _brief(n: int) -> str:
+    """An int for an error message: never the 5000 digits of a runaway index."""
+    return str(n) if n.bit_length() <= 64 else f"<{n.bit_length()}-bit value>"
+
+
+def _may_be_rounded(n: Number) -> bool:
+    if isinstance(n, int):
+        return False
+    bits = int(n._mpf_[3])
+    return WORKING_PREC - _ROUNDED_MANTISSA_SLACK <= bits <= WORKING_PREC
 
 
 def evaluate(
@@ -72,6 +104,9 @@ class _Evaluator:
         self.variables = variables
         self.ans = ans
         self.csrs = csrs
+        # Lookups of a stored real that only carries the working precision;
+        # _call compares before/after to know if a widened argument used one.
+        self._rounded_refs = 0
 
     @property
     def _mask(self) -> int:
@@ -79,6 +114,10 @@ class _Evaluator:
 
     def eval(self, node: Node) -> Value:
         if isinstance(node, Literal):
+            if node.exact is not None and mpmath.mp.prec != WORKING_PREC:
+                # Raised precision (see _call): 0.1 is re-derived from the
+                # digits that were typed, not from its 25-digit rounding.
+                return Value(fraction_to_mpf(node.exact), node.declared_width)
             return Value(node.value, node.declared_width)
         if isinstance(node, Name):
             return self._name(node)
@@ -103,10 +142,14 @@ class _Evaluator:
         if ident == "ans":
             if self.ans is None:
                 raise EvalError("no previous result", node.span)
+            self._rounded_refs += _may_be_rounded(self.ans.number)
             return self.ans
         if ident in CONSTANTS:
+            if mpmath.mp.prec != WORKING_PREC:
+                return Value(+mpmath.pi if ident == "pi" else +mpmath.e)
             return Value(CONSTANTS[ident][0])
         if ident in self.variables:
+            self._rounded_refs += _may_be_rounded(self.variables[ident].number)
             return self.variables[ident]
         if ident in FUNCTIONS:
             raise EvalError(f"{ident} is a function — call it: {ident}(...)", node.span)
@@ -118,7 +161,7 @@ class _Evaluator:
         operand = self.eval(node.operand)
         if node.op == "-":
             n = operand.number
-            return Value(-n if isinstance(n, int) else -mpmath.mpf(n))
+            return Value(-n)
         # ~
         a = self._require_int(operand, node.operand.span, "~")
         return Value(~(a & self._mask) & self._mask)
@@ -130,21 +173,42 @@ class _Evaluator:
         if op in BIT_OPS:
             return self._bit_op(node, left, right)
         a, b = left.number, right.number
+        if isinstance(a, int) and isinstance(b, int):
+            if op == "*" and a.bit_length() + b.bit_length() > MAX_POW_RESULT_BITS + 1:
+                raise EvalError("result too large", node.span)  # before building it
+        elif op != "**":
+            # Mixed int/real: hand mpmath a real, so a wide round integer does
+            # not go through its quadratic exact conversion (see to_mpf).
+            a, b = to_mpf(a), to_mpf(b)
         if op == "+":
-            return Value(a + b)
+            return self._bounded(Value(a + b), node)
         if op == "-":
-            return Value(a - b)
+            return self._bounded(Value(a - b), node)
         if op == "*":
-            return Value(a * b)
+            return self._bounded(Value(a * b), node)
         if op == "/":
-            return self._true_div(node, a, b)
+            return self._bounded(self._true_div(node, a, b), node)
         if op == "//":
             return self._trunc_div(node, a, b)
         if op == "%":
             return self._c_mod(node, a, b)
         if op == "**":
-            return self._power(node, a, b)
+            return self._bounded(self._power(node, a, b), node)
         raise EvalError(f"internal: unknown operator {op!r}", node.span)  # pragma: no cover
+
+    def _bounded(self, value: Value, node: Binary) -> Value:
+        """Hold an arithmetic result to the same budget as `**` and literals.
+
+        Without it `2**400000*2**400000*2**400000` is a 1.2M-bit integer that
+        only shows as the text "overflow", and `1.5**1e8 // 1` asks for a
+        58M-bit integer out of a real that should never have been kept.
+        """
+        n = value.number
+        if isinstance(n, int):
+            if n.bit_length() > MAX_POW_RESULT_BITS:
+                raise EvalError("result too large", node.span)
+            return value
+        return guard_displayable(value, node.span)
 
     def _true_div(self, node: Binary, a: Number, b: Number) -> Value:
         self._check_nonzero(b, node.right.span)
@@ -152,14 +216,15 @@ class _Evaluator:
             q, r = divmod(a, b)
             if r == 0:
                 return Value(q)
-        return Value(mpmath.mpf(a) / mpmath.mpf(b))
+        return Value(to_mpf(a) / to_mpf(b))
 
     def _trunc_div(self, node: Binary, a: Number, b: Number) -> Value:
         self._check_nonzero(b, node.right.span)
         if isinstance(a, int) and isinstance(b, int):
             q = abs(a) // abs(b)
             return Value(-q if (a < 0) != (b < 0) else q)
-        quotient = mpmath.mpf(a) / mpmath.mpf(b)
+        quotient = to_mpf(a) / to_mpf(b)
+        guard_displayable(Value(quotient), node.span)  # before it becomes an int
         truncated = mpmath.floor(quotient) if quotient >= 0 else mpmath.ceil(quotient)
         return Value(int(truncated))
 
@@ -168,7 +233,7 @@ class _Evaluator:
         if isinstance(a, int) and isinstance(b, int):
             assert isinstance(quotient, int)
             return Value(a - quotient * b)
-        return Value(mpmath.mpf(a) - mpmath.mpf(quotient) * mpmath.mpf(b))
+        return Value(to_mpf(a) - to_mpf(quotient) * to_mpf(b))
 
     def _power(self, node: Binary, a: Number, b: Number) -> Value:
         if isinstance(a, int) and isinstance(b, int):
@@ -186,11 +251,11 @@ class _Evaluator:
                 return Value(a**b)
             if a == 0:
                 raise EvalError("0 cannot be raised to a negative power", node.span)
-            return Value(mpmath.mpf(1) / mpmath.power(mpmath.mpf(a), -b))
-        exponent = mpmath.mpf(b)
+            return Value(mpmath.mpf(1) / mpmath.power(to_mpf(a), -b))
+        exponent = to_mpf(b)
         if abs(exponent) > MAX_MPF_EXPONENT:
             raise EvalError("exponent too large", node.right.span)
-        base = mpmath.mpf(a)
+        base = to_mpf(a)
         if base < 0:
             if not mpmath.isint(exponent):
                 raise EvalError(
@@ -240,8 +305,12 @@ class _Evaluator:
                     f"{node.func} takes {expected} argument(s), got {len(node.args)}", node.span
                 )
             args = [self.eval(arg).number for arg in node.args]
+            needed = spec.precision(args) if spec.precision is not None else None
             try:
-                result = spec.handler(args, self.ctx)
+                if needed is not None and needed > mpmath.mp.prec:
+                    result = self._call_widened(node, spec.handler, args, needed)
+                else:
+                    result = spec.handler(args, self.ctx)
             except FunctionDomainError as exc:
                 raise EvalError(str(exc), node.span) from exc
             value = result if isinstance(result, Value) else Value(result)
@@ -253,6 +322,23 @@ class _Evaluator:
         if self.csrs and node.func in self.csrs:
             return self._csr_call(node)
         raise EvalError(f"unknown function {node.func!r}", node.func_span)
+
+    def _call_widened(
+        self, node: Call, handler: Handler, args: list[Number], precision: int
+    ) -> Number | Value:
+        """Run `handler` with its first argument re-evaluated at `precision` bits.
+
+        Literals and constants are re-derived at that precision; a stored real
+        cannot be, so its use is reported to the handler (`limited_input`),
+        which then knows not to claim more bits than the input ever had.
+        """
+        refs_before = self._rounded_refs
+        with mpmath.workprec(precision):
+            args[0] = self.eval(node.args[0]).number
+            ctx = dataclasses.replace(
+                self.ctx, limited_input=self._rounded_refs > refs_before
+            )
+            return handler(args, ctx)
 
     def _csr_macro(self, node: Call) -> Value:
         if len(node.args) < 2:
@@ -310,10 +396,10 @@ class _Evaluator:
         if node.msb is not None:
             msb = self._require_int(self.eval(node.msb), node.msb.span, "bit index")
         if lsb < 0 or msb < lsb:
-            raise EvalError(f"invalid bit range [{msb}:{lsb}]", node.span)
+            raise EvalError(f"invalid bit range [{_brief(msb)}:{_brief(lsb)}]", node.span)
         if msb >= self.ctx.word_size:
             raise EvalError(
-                f"bit {msb} is outside the {self.ctx.word_size}-bit word", node.span
+                f"bit {_brief(msb)} is outside the {self.ctx.word_size}-bit word", node.span
             )
         width = msb - lsb + 1
         return Value((value & self._mask) >> lsb & ((1 << width) - 1), declared_width=width)
@@ -329,7 +415,7 @@ class _Evaluator:
         )
 
     def _check_nonzero(self, b: Number, span: Span) -> None:
-        if (isinstance(b, int) and b == 0) or (not isinstance(b, int) and mpmath.mpf(b) == 0):
+        if b == 0:
             raise EvalError("division by zero", span)
 
 
